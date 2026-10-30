@@ -2,9 +2,9 @@
 
 | 문서 ID | 버전 | 작성 | 작성일 | 상태 |
 |---|---|---|---|---|
-| SRS-001 | 0.7 | requirements-analyst | 2026-10-30 | 개정안 (마케팅 검토·② 확인 질문 답변·D-014~D-022 반영, G2 승인 전) |
+| SRS-001 | 0.8 | requirements-analyst | 2026-10-30 | **v0.8 — G2 변경 승인 대기** (G2 기준선 v0.7(D-023) 대비 변경안: D-026 정오표(I-042), D-033·D-034 TCP/RTU 모델 분리(I-044), D-032 잠정 판매가 참고 기재) |
 
-> 이 문서는 개정안이다. 확정은 G2 게이트에서 사용자가 한다.
+> 이 문서는 G2 기준선(v0.7, D-023) 이후의 변경안이다. 변경 승인은 G2 변경 게이트에서 사용자가 한다. 승인 전까지 ③단계의 기준은 v0.7이며, 이 문서의 변경 내역은 「v0.8 변경표」에 모았다.
 > 약어: MR = 01_market/market-research.md, CA = 01_market/competitor-analysis.md, SUM = 01_market/summary.md, HO1 = 01_market/handoff.md, D-xxx = decisions.md 결정 ID, MKT-xx = 02_requirements/marketing-review.md 의견 ID(문서 내 ID는 MR-xx. 시장조사 보고서 약어 MR과 헷갈리지 않도록 본 SRS에서는 MKT-xx로 적는다), MKT-Qn = marketing-review.md §3 제안 답변.
 > 고객 관련 근거는 모두 간접 근거이며, 고객 인터뷰 없이 작성했다(D-008). 고객 필요를 전제로 한 요구사항에는 [가정] 태그를 붙였다.
 > 마케팅 제안 답변(MKT-Qn)으로 채운 값은 모두 [가정]이다. 출처 없는 시작값이며, G2에서 사용자가 승인·수정한다(§8.1).
