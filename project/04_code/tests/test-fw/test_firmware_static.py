@@ -75,7 +75,7 @@ def test_m03_estop_has_highest_interrupt_level():
 def test_m04_boot_state_is_latched_and_used_for_every_run_path():
     es = src("components", "tfw_estop_io", "tfw_estop_io.c")
     assert re.search(r"tfw_es_boot_check\(&s_es, tfw_estop_input_active\(\)\)", es)
-    assert "return tfw_es_blocking(&s_es, tfw_estop_input_active())" in es
+    assert "return !s_init_ok || tfw_es_blocking(&s_es, tfw_estop_input_active())" in es      # R2 N-02: not-initialised also blocks
     main = src("main", "tfw_main.c")
     assert "tfw_cmd_check(&g_win, cmd, s_seq_running, tfw_estop_blocking()" in main
     assert "tfw_estop_latched()" not in main and "tfw_estop_latched()" not in src("components", "tfw_modbus", "tfw_modbus.c")

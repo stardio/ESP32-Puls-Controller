@@ -47,10 +47,11 @@ class _Handler(socketserver.BaseRequestHandler):
 
 class MockTfwServer:
     def __init__(self, max_clients=4, delay_s=0.0, run_time_s=0.05, mode="normal", iram_flag=True, reject_status=None,
-                 inject=None):
+                 inject=None, trip_on_run=False):
         """mode: normal | abort (ends IDLE after one iteration) | hang (stays RUNNING). reject_status: RUN answers with
         this status and does not run. inject: {register name: value} written when a run finishes (e.g. ERR_AX1)."""
         self.mode, self.reject_status, self.inject = mode, reject_status, dict(inject or {})
+        self.trip_on_run = trip_on_run      # a RUN command makes the (simulated) operator trip the e-stop: es_trip_count += 1
         self.run_t0, self.run_end = None, None
         self.regs = {}
         self.max_clients = max_clients
@@ -101,6 +102,8 @@ class MockTfwServer:
     def _run(self, cmd):
         """Simulated sequencer: finishes after run_time_s with error-free counters."""
         R = regs.R
+        if self.trip_on_run:
+            self.regs[R["ES_TRIP_COUNT"]] = self.regs.get(R["ES_TRIP_COUNT"], 0) + 1
         if self.reject_status is not None:
             self.regs[R["STATUS"]] = self.reject_status
             return

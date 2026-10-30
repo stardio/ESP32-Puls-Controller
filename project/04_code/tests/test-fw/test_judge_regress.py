@@ -17,11 +17,13 @@ def base(tid):
     """A complete, genuinely good run for each T-ID."""
     d = dict(wait_status=2, timed_out=False, seq_done=1000, err_ax1=0, err_ax2=0, overshoot_ax1=0, overshoot_ax2=0,
              cmd="RUN_SEQ", repeat=1000, axis_mask=3, param_status=2, param_mismatch=[], clear_ok=True, upd_late=0,
-             la_edges=[2000, 2000], la_expected_edges=[2000, 2000], freq_hz=200000, seed_changed=False)
+             la_edges=[2000, 2000], la_expected_edges=[2000, 2000], freq_hz=200000, seed_changed=False,
+             la_fresh=True, la_fresh_reasons=[])                      # R2 N-04: the CSV is proven to be this run's capture
     if tid == "T-03":
         d.update(cmd="RUN_FIXED", repeat=1, seq_done=1, la_f_avg_hz=[200000.0, 200000.0], la_f_min_hz=199000.0, la_edges=[9, 9])
     if tid == "T-05":
-        d.update(tcp_load={"refused": 0, "requests": 500, "errors": 0}, tcp_clients=4, hmi=True, mb_clients_max=6, mb_max_clients=8)
+        d.update(tcp_load={"refused": 0, "requests": 500, "errors": 0, "dropped": 0, "idle_clients": 0}, tcp_clients=4, hmi=True,
+                 mb_clients_max=6, mb_clients_min=6, mb_max_clients=8)
     if tid == "T-06":
         d.update(nvs_period_ms=100, nvs_writes=100, run_s=20.0, cfg_flags=1, iram_safe=True)
     if tid == "T-09":
@@ -93,13 +95,23 @@ def _steps_file(tmp_path, step):
     return str(sc)
 
 
-def _csv(path, n1, n2):
+def _csv(path, n1, n2, span=30.0):
     with open(path, "w") as f:
         f.write("Time [s],ax1,ax2\n0.0,0,0\n")
         for i in range(max(n1, n2)):
             t = 1e-5 * (i + 1)
             a, b = int(i < n1), int(i < n2)
             f.write(f"{t:.7f},{a},{b}\n{t + 5e-6:.7f},0,0\n")
+        f.write(f"{span},0,0\n")                    # capture end (no edge): the capture is longer than any mock run
+
+
+def _cap(tmp_path, n1=2000, n2=2000):
+    """The operator's export: called by run_scenario AFTER the run, so the file is newer than the run end."""
+    def hook(step, rec):
+        p = tmp_path / "la.csv"
+        _csv(p, n1, n2)
+        return str(p)
+    return hook
 
 
 T04 = {"id": "T-04", "cmd": "RUN_SEQ", "axis_mask": 3, "freq_hz": 200000, "count": 2, "repeat": 1000, "seed": 0,
@@ -107,10 +119,9 @@ T04 = {"id": "T-04", "cmd": "RUN_SEQ", "axis_mask": 3, "freq_hz": 200000, "count
 
 
 def _e2e(tmp_path, step, csv=(2000, 2000), **mock_kw):
-    _csv(tmp_path / "la.csv", *csv)
     srv = MockTfwServer(**mock_kw).start()
     try:
-        res = run_scenario(_steps_file(tmp_path, step), f"127.0.0.1:{srv.port}", str(tmp_path / "res"))
+        res = run_scenario(_steps_file(tmp_path, step), f"127.0.0.1:{srv.port}", str(tmp_path / "res"), capture=_cap(tmp_path, *csv))
         return res[step["id"]][0], srv
     finally:
         srv.stop()
@@ -259,11 +270,10 @@ def _hmi(srv):
 
 
 def _e2e_hmi(tmp_path, step, max_clients, run_time=0.6, **kw):
-    _csv(tmp_path / "la.csv", 2000, 2000)
     srv = MockTfwServer(max_clients=max_clients, run_time_s=run_time, **kw).start()
     hmi = _hmi(srv)
     try:
-        res = run_scenario(_steps_file(tmp_path, step), f"127.0.0.1:{srv.port}", str(tmp_path / "res"))
+        res = run_scenario(_steps_file(tmp_path, step), f"127.0.0.1:{srv.port}", str(tmp_path / "res"), capture=_cap(tmp_path))
         return res[step["id"]][0], srv
     finally:
         hmi.close()
@@ -331,16 +341,19 @@ def test_m09_latch_probe_results():
     assert probe_latched_run(FakeDev(0, True), wait_s=0.01) is None     # not latched: not measurable
 
 
+T07 = dict(es_last_err=0, es_trip_count_before=0, es_trip_count=1)        # R2 N-02: the preconditions of a T-07 result
+
+
 def test_m09_t07_unmeasured_is_stated_as_unmeasured():
-    v = judge("T-07", {})
+    v = judge("T-07", dict(T07))
     assert v["status"] == RECORD and any("미측정" in r for r in v["reasons"])
     assert not any("재기동 0" in r and "미측정" not in r for r in v["reasons"])      # old text claimed "래치 중 재기동 0"
-    assert judge("T-07", {"relaunch_after_latch": 1})["status"] == FAIL
-    assert judge("T-07", {"relaunch_after_latch": 0})["status"] == RECORD
+    assert judge("T-07", dict(T07, relaunch_after_latch=1))["status"] == FAIL
+    assert judge("T-07", dict(T07, relaunch_after_latch=0))["status"] == RECORD
 
 
 def test_m09_e2e_latch_probe_with_mock(tmp_path):
-    srv = MockTfwServer().start()
+    srv = MockTfwServer(trip_on_run=True).start()                          # the trip is counted while the run is attempted (R2 N-02)
     try:
         srv.regs[regs.R["ES_STATE"]] = 2                                   # latched
         step = {"id": "T-07", "cmd": "RUN_FIXED", "axis_mask": 1, "freq_hz": 200000, "count": 10, "timeout_s": 2, "latch_probe": True}
@@ -375,7 +388,7 @@ def test_m06_trigger_edge_must_match_polarity(tmp_path):
     p = tmp_path / "t.csv"
     with open(p, "w") as f:
         f.write("Time [s],trg,ax1,ax2\n0.0,1,0,0\n0.001,0,1,0\n0.0011,0,0,0\n")
-    d = {}
+    d = dict(T07, la_fresh=True)
     analyse_la({"la_csv": str(p), "la_trigger_channel": "trg", "estop_active_low": False, "la_trigger_edge": "fall"}, d)
     assert d["la_trigger_edge_mismatch"] is True          # active-HIGH build must trigger on the rising edge
     assert judge("T-07", d)["status"] == NOT_RUN

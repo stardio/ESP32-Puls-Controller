@@ -1,15 +1,23 @@
 # Example scenario (T-03..T-09). la_csv paths are relative to this file. Fill in after capturing with the analyser.
+# Review round 2 (N-04): a run and the judgement of logic-analyser data are SEPARATE. `run` leaves every step that has
+# la_csv PENDING (run_s / end time are stored in the result JSON). After the run, export THIS run's capture and attach it:
+#   python -m tfw_host.cli judge results/<T-ID>_<time>_<n>.json <capture.csv>
+# (or `run --wait-capture`: stops after every step so you can export). The CSV counts only if it was modified after the
+# run ended, is as long as the run (first..last row >= run_s - 0.5 s [assumption]) and its sha256 is not used by another run.
 # Review round 1: a step is judged PASS only if the run COMPLETED (status DONE, seq_done == repeat), every written
 # parameter was read back unchanged, and (T-04/05/06) the external edge count per axis equals the target sum that the
 # host reproduces from seed/count (la_csv needed; channels ax1/ax2 = axis 1/2). Missing data gives NOT_RUN, never PASS.
 steps:
-  # M-05 first item on the board: stopped -> start at another frequency, check the FIRST 2-3 periods in the capture
-  # (previous run 1 MHz fixed, then 5 kHz). Judged by T-09 rules (no pulse above the request); read the waveform by eye too.
-  - {id: T-09, name: "first period after stop (1 MHz then 5 kHz)", cmd: RUN_FIXED, axis_mask: 1, freq_hz: 5000, count: 2000, la_csv: la_t09_first_period.csv, la_pulse_channels: [ax1], check_not_above_request: true, tol_pct: 0.5, timeout_s: 30}
+  # M-05 (needs the logic analyser, one capture file per step, started before the run and stopped after it):
+  # (a) 1 MHz fixed, (b) 5 kHz right after it: the FIRST 3 periods must be 200 us (res 10 MHz: 2000 ticks) +- 2 LA samples,
+  # a longer first period (previous, shorter one left over) is a FAIL as well as a shorter one, (c) back to 1 MHz after 5 kHz.
+  - {id: T-09, name: "pre-step 1 MHz fixed", cmd: RUN_FIXED, axis_mask: 1, freq_hz: 1000000, count: 20000, la_csv: la_t09_a_1mhz.csv, la_pulse_channels: [ax1], la_sample_rate_hz: 50000000, check_not_above_request: true, timeout_s: 30}
+  - {id: T-09, name: "first period after stop (1 MHz then 5 kHz)", cmd: RUN_FIXED, axis_mask: 1, freq_hz: 5000, count: 2000, la_csv: la_t09_b_5khz.csv, la_pulse_channels: [ax1], la_sample_rate_hz: 50000000, check_not_above_request: true, la_first_periods: {n: 3, res_hz: 10000000}, timeout_s: 30}
+  - {id: T-09, name: "first period after stop (5 kHz then 1 MHz)", cmd: RUN_FIXED, axis_mask: 1, freq_hz: 1000000, count: 20000, la_csv: la_t09_c_1mhz.csv, la_pulse_channels: [ax1], la_sample_rate_hz: 50000000, check_not_above_request: true, la_first_periods: {n: 3, res_hz: 10000000}, timeout_s: 30}
   - {id: T-03, name: "2-axis fixed 200 kHz 10 s", cmd: RUN_FIXED, axis_mask: 3, freq_hz: 200000, count: 2000000, la_csv: la_t03_200k.csv, la_pulse_channels: [ax1, ax2], timeout_s: 60}
   - {id: T-04, name: "random 1000 moves", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 12345, la_csv: la_t04.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
   # T-05 needs: TFW_MAX_CLIENTS >= 1 control + 4 load + 1 HMI = 6 (build 8), the real HMI connected (hmi: true is YOUR statement)
-  - {id: T-05, name: "4 TCP clients + HMI during sequence", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 777, hmi: true, tcp_load: {clients: 4, fc: MIX, qty: 125, interval_ms: 0}, la_csv: la_t05.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
+  - {id: T-05, name: "4 TCP clients + HMI during sequence", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 777, hmi: true, tcp_load: {clients: 4, fc: MIX, qty: 125, interval_ms: 0, settle_s: 2}, la_csv: la_t05.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
   # T-06: iram_safe must equal the build you flashed; the tool compares it with cfg_flags b0 (0x7012)
   - {id: T-06, name: "NVS write 100 ms", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 99, nvs_period_ms: 100, iram_safe: true, la_csv: la_t06.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
   # T-07: trigger GPIO19 by hand during the run; latch_probe then tries RUN while latched (expects 0x10)

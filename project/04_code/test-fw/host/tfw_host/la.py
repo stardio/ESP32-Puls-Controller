@@ -96,3 +96,17 @@ def latency(la_csv: str, trigger_ch: str, pulse_ch: str, trigger_edge: str = "fa
     s = sorted(lat)
     p99 = s[min(len(s) - 1, int(round(0.99 * (len(s) - 1))))]
     return LatStats(len(trig), lat, after, min(lat), statistics.fmean(lat), max(lat), p99)
+
+
+def capture_span(la_csv: str) -> float:
+    """Time from the first to the last row of the CSV [s] (a lower bound of the capture length: a CSV that only has a
+    row per transition does not show idle time before the first / after the last row)."""
+    _, rows = _read(la_csv)
+    return (rows[-1][0] - rows[0][0]) if len(rows) >= 2 else 0.0
+
+
+def first_periods(la_csv: str, channel: str, n: int = 3) -> list:
+    """The first n rising-edge periods of the capture in microseconds (M-05: first pulses after a stop). Fewer than n
+    values mean the capture has fewer than n+1 rising edges."""
+    t = _edges(la_csv, channel, "rise")
+    return [(b - a) * 1e6 for a, b in zip(t[:n + 1], t[1:n + 1])]

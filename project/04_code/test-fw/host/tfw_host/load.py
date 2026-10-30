@@ -18,6 +18,8 @@ class LoadStats:
     timeouts: int = 0
     exceptions: int = 0
     refused: int = 0
+    dropped: int = 0          # R-01: clients that ended on their own (connection lost) while the load was meant to run
+    idle_clients: int = 0     # R-01: clients that finished without a single successful request
     latencies_us: list = field(default_factory=list)
 
     def percentile(self, p: float) -> float:
@@ -44,6 +46,7 @@ class LoadStats:
         return {
             "clients": self.clients, "duration_s": round(self.duration_s, 3), "requests": self.requests,
             "errors": self.errors, "timeouts": self.timeouts, "exceptions": self.exceptions, "refused": self.refused,
+            "dropped": self.dropped, "idle_clients": self.idle_clients,
             "rtt_us_min": min(lat) if lat else 0, "rtt_us_avg": statistics.fmean(lat) if lat else 0,
             "rtt_us_p99": self.percentile(99), "rtt_us_max": max(lat) if lat else 0, "hist": self.histogram(),
         }
@@ -66,9 +69,14 @@ def _worker(host, port, unit, fc, qty, interval_s, stop_evt, out, lock, base_add
     try:
         wvals = cli.read_holding(wa, 2)
     except ModbusTimeout:
+        # n-2: without the register's current value no write-back is possible (writing 0 would change the SEED)
         st.errors += 1
         st.timeouts += 1
-        wvals = [0, 0]
+        st.idle_clients += 1
+        cli.close()
+        with lock:
+            out.append(st)
+        return
     except (ModbusError, OSError):
         # The firmware accepts the TCP connection and then closes it when max_clients is reached: a closed connection on
         # the very first request is a refused client (C-03). connect() alone cannot show this.
@@ -96,12 +104,16 @@ def _worker(host, port, unit, fc, qty, interval_s, stop_evt, out, lock, base_add
                 st.exceptions += 1
             except (ModbusError, OSError):
                 st.errors += 1
+                if not stop_evt.is_set():
+                    st.dropped += 1          # R-01: connection lost while the load should still run
                 break
             n += 1
             if interval_s > 0:
                 stop_evt.wait(interval_s)
     finally:
         cli.close()
+        if st.requests == 0:
+            st.idle_clients += 1
         with lock:
             out.append(st)
 
@@ -122,6 +134,8 @@ class _Running:
                 res.timeouts += s.timeouts
                 res.exceptions += s.exceptions
                 res.refused += s.refused
+                res.dropped += s.dropped
+                res.idle_clients += s.idle_clients
                 res.latencies_us.extend(s.latencies_us)
         return res
 

@@ -34,6 +34,20 @@ def _v(status, *reasons):
     return {"status": status, "reasons": list(reasons)}
 
 
+LA_KEYS = ("la_edges", "la_f_avg_hz", "la_f_max_hz", "la_latency_us_max", "la_first_periods_us")
+
+
+def _la_gate(d: dict):
+    """N-04: logic-analyser data count only if the CSV is proven to be the capture of THIS run (attached after the run:
+    modified after the run ended, long enough, hash not used by another run). Else the data is stale -> FAIL."""
+    if not any(k in d for k in LA_KEYS):
+        return None
+    if d.get("la_fresh") is not True:
+        why = d.get("la_fresh_reasons") or ["CSV가 이 실행의 캡처라는 확인(수정 시각·길이·해시)이 없음"]
+        return _v(FAIL, "로직 분석기 CSV가 이번 실행의 캡처가 아님(묵은 캡처로 합격할 수 있음): " + "; ".join(why))
+    return None
+
+
 def _precheck(d: dict, *, need_axes=None, min_iter=None):
     """Conditions without which a counter value of 0 means nothing (C-01). Returns a verdict dict if the run cannot
     count as a valid, completed run, else None. Order: missing data -> NOT_RUN, a run that did not complete -> FAIL."""
@@ -57,6 +71,9 @@ def _precheck(d: dict, *, need_axes=None, min_iter=None):
     iters = d["repeat"] if d["cmd"] == "RUN_SEQ" else 1
     if d["seq_done"] != iters:
         return _v(FAIL, f"seq_done {d['seq_done']} != 기대 반복 {iters}")
+    la = _la_gate(d)
+    if la:
+        return la
     if need_axes is not None and d["axis_mask"] != need_axes:
         return _v(NOT_RUN, f"기준 조건 미충족: axis_mask {d['axis_mask']} (기준 {need_axes})")
     if min_iter is not None and iters < min_iter:
@@ -150,7 +167,19 @@ def judge(tid: str, d: dict) -> dict:
         mx = d.get("mb_max_clients")
         if mx is not None and mx < want:
             why.append(f"빌드 max_clients {mx} < 필요 접속 {want}: T-05 조건을 만들 수 없음(설계 모순 T-05 6개 대 4개)")
-        if ld.get("refused", 0) or ld.get("requests", 0) <= 0 or seen < want or (mx is not None and mx < want):
+        smin = d.get("mb_clients_min")
+        if smin is None:
+            return _v(FAIL if (bad or ovs or late) else NOT_RUN, *why, "판정 불가: 실행 중 최소 접속 수(mb_clients_min) 미측정")
+        if smin < want:
+            why.append(f"실행 중 최소 접속 {smin} < 기대 {want}: 부하가 운전 내내 유지되지 않음")
+        if ld.get("dropped", 0):
+            why.append(f"부하 클라이언트 {ld['dropped']}개가 운전 도중 끊김")
+        if ld.get("idle_clients", 0):
+            why.append(f"요청을 한 건도 처리하지 못한 부하 클라이언트 {ld['idle_clients']}개")
+        if ld.get("errors", 0):
+            why.append(f"부하 오류 {ld['errors']}건(타임아웃 {ld.get('timeouts', 0)}, 예외 {ld.get('exceptions', 0)}): 기록")
+        if (ld.get("refused", 0) or ld.get("requests", 0) <= 0 or seen < want or (mx is not None and mx < want) or
+                smin < want or ld.get("dropped", 0) or ld.get("idle_clients", 0)):
             return _v(FAIL, *why)
         if bad or ovs or late:
             return _v(FAIL, *([f"펄스 오차 {bad}, 초과 {ovs}"] if (bad or ovs) else []), *why)
@@ -160,7 +189,7 @@ def judge(tid: str, d: dict) -> dict:
             return _v(NOT_RUN, *why, "기준 조건 미충족: 실제 HMI 1대 접속이 확인되지 않음(step.hmi 미지정)")
         r = _pulse_verdict(d, why, "T-05")
         why.append("응답 시간 분포는 기록 항목")
-        return r or _v(PASS, *why, f"접속 최대 {seen}, 부하 요청 {ld['requests']}건")
+        return r or _v(PASS, *why, f"접속 최소 {smin}·최대 {seen}, 부하 요청 {ld['requests']}건")
     if tid == "T-06":
         pre = _precheck(d, need_axes=3, min_iter=MIN_ITER_T04)
         if pre:
@@ -187,6 +216,15 @@ def judge(tid: str, d: dict) -> dict:
         return _v(RECORD, f"IRAM 안전 off(비교용, 장치 확인): 오차 {bad}, 초과 {ovs}, NVS 쓰기 {nvs}회")
     if tid == "T-07":
         why.append("정지 지연·경로 간 계수 차이는 기록 항목(NFR-011 미확인)")
+        la = _la_gate(d)
+        if la:
+            return la
+        if d.get("es_last_err") is None or d.get("es_trip_count") is None or d.get("es_trip_count_before") is None:
+            return _v(NOT_RUN, *why, "판정 불가: es_last_err/es_trip_count(실행 전후) 없음")
+        if d["es_last_err"] != 0:
+            return _v(NOT_RUN, *why, f"전제 불충족: es_last_err=0x{d['es_last_err']:x}(초기화 실패 또는 ISR 서비스 기설치로 레벨·IRAM 설정 미적용): 경로 A 결과로 기록할 수 없음")
+        if d["es_trip_count"] <= d["es_trip_count_before"]:
+            return _v(NOT_RUN, *why, f"전제 불충족: 비상정지 트립이 기록되지 않음(es_trip_count {d['es_trip_count_before']} -> {d['es_trip_count']})")
         if d.get("la_trigger_edge_mismatch"):
             return _v(NOT_RUN, *why, "판정 불가: 로직 분석기 트리거 엣지가 장치 극성과 맞지 않음")
         relaunch = d.get("relaunch_after_latch")
@@ -206,13 +244,21 @@ def judge(tid: str, d: dict) -> dict:
         if pre:
             return pre
         over = d.get("requests_exceeded")
+        fp = d.get("first_periods_check")
+        if fp is not None:
+            if fp.get("bad"):
+                return _v(FAIL, f"정지 후 첫 주기가 기대({fp['expected_us']:.3f} us ± {fp['tol_us']:.3f}) 밖: {[round(x, 3) for x in fp['bad']]} us "
+                                f"(기대보다 {'짧음=요청 초과' if any(x < fp['expected_us'] for x in fp['bad']) else '길음=이전 주기 잔류'})")
+            if fp.get("n_found", 0) < fp.get("n", 3):
+                return _v(NOT_RUN, f"판정 불가: 캡처에 첫 {fp.get('n', 3)}주기가 없음({fp.get('n_found', 0)}개)")
         if over:
             return _v(FAIL, f"요청 초과 출력: {over}")
         if not d.get("freq_checked") or over is None:
             return _v(NOT_RUN, "측정 없음")
         if not d.get("la_f_max_hz"):
             return _v(NOT_RUN, "판정 불가: 로직 분석기에 펄스가 없음")
-        return _v(PASS, "요청 초과 출력 0")
+        extra = f"; 첫 {fp['n']}주기가 기대 {fp['expected_us']:.3f} us ± {fp['tol_us']:.3f} 안" if fp is not None else ""
+        return _v(PASS, "요청 초과 출력 0" + extra)
     if tid == "T-14":
         return _v(RECORD, "1축은 기존 실적으로 대체(D-028); 2축 드라이브 수신 펄스 대조는 사용자 입력")
     if tid in HARDWARE_ONLY:

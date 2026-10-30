@@ -7,7 +7,7 @@ import time
 from .judge import ALL_IDS, T_TITLES, SUBSTITUTED_IDS, HARDWARE_ONLY, SUBSTITUTED, NOT_RUN
 
 LABEL = {"PASS": "합격", "FAIL": "불합격", "RECORD": "기록(판정 없음)", "SUBSTITUTED": "기존 실적으로 대체(D-028)",
-         "NOT_RUN": "미실시"}
+         "NOT_RUN": "미실시", "PENDING": "판정 대기(LA CSV 필요)"}
 
 
 def _load(results_dir):

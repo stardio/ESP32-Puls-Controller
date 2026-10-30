@@ -1,13 +1,16 @@
 """Scenario runner (TFW-05). A scenario file (YAML or JSON) lists steps; each step belongs to one T-ID.
 HIL only: the firmware and the hardware are needed for real runs (tests use the local mock server)."""
+import glob
+import hashlib
 import json
+import math
 import os
 import time
 
 from . import regs
 from .expect import expected_edges
 from .judge import judge
-from .la import count_edges, freq_stats, latency
+from .la import capture_span, count_edges, first_periods, freq_stats, latency
 from .load import start_load
 from .modbus import ModbusTcpClient, ModbusError, ModbusTimeout
 
@@ -70,7 +73,7 @@ def read_results(dev: Dev) -> dict:
            "mb_hist": dev._retry(dev.cli.read_holding, R["MB_HIST"], 8),
            "es_state": dev.r16("ES_STATE"), "es_trip_count": dev.r16("ES_TRIP_COUNT"),
            "es_pulses_after_ax1": dev.r32("ES_PULSES_AX1"), "es_pulses_after_ax2": dev.r32("ES_PULSES_AX2"),
-           "es_bind_ok": dev.r16("ES_BIND_OK"), "es_boot_level": dev.r16("ES_BOOT_LEVEL"),
+           "es_bind_ok": dev.r16("ES_BIND_OK"), "es_boot_level": dev.r16("ES_BOOT_LEVEL"), "es_last_err": dev.r16("ES_LAST_ERR"),
            "cfg_flags": dev.r16("CFG_FLAGS"), "mb_clients": dev.r16("MB_CLIENTS"), "mb_max_clients": dev.r16("MB_MAX_CLIENTS")}
     return out
 
@@ -142,19 +145,30 @@ def run_step(step: dict, target: str) -> dict:
         if ld:
             load = start_load(target, ld.get("clients", 4), ld.get("fc", "MIX"), ld.get("qty", 125), ld.get("interval_ms", 0))
         seen = [0]
+        smin = [None]
+        trip_before = dev.r16("ES_TRIP_COUNT")        # N-02: T-07 needs the trip count to rise during the run
+        t_settle = [None]
 
-        def sample():
-            seen[0] = max(seen[0], dev.r16("MB_CLIENTS"))
+        def sample(final=False):
+            n = dev.r16("MB_CLIENTS")
+            seen[0] = max(seen[0], n)
+            # R-01: minimum over the run. Samples before the settle time are skipped (connections still being made);
+            # the final sample (load still running) always counts.
+            if final or (t_settle[0] is not None and time.time() >= t_settle[0]):
+                smin[0] = n if smin[0] is None else min(smin[0], n)
         cmd_name = step.get("cmd", "RUN_SEQ")
         t_run = time.time()
+        t_settle[0] = t_run + float((ld or {}).get("settle_s", 1.0))
         dev.w16("CMD", regs.CMD[cmd_name])
         st = _wait_done(dev, step.get("timeout_s", 600), sample if ld else None)
-        run_s = time.time() - t_run
+        t_end = time.time()
+        run_s = t_end - t_run
         if ld:
-            sample()                       # load still running here
+            sample(final=True)             # load still running here
         data = read_results(dev)
         data.update(pinfo)
-        data.update(wait_status=st, timed_out=st is None, clear_ok=clear_ok, run_s=run_s, mb_clients_max=seen[0] if ld else None,
+        data.update(wait_status=st, timed_out=st is None, clear_ok=clear_ok, run_s=run_s, run_start_ts=t_run, run_end_ts=t_end,
+                    mb_clients_max=seen[0] if ld else None, mb_clients_min=smin[0] if ld else None, es_trip_count_before=trip_before,
                     cmd=cmd_name, repeat=step.get("repeat", 1), axis_mask=step.get("axis_mask", 3),
                     seed_changed=(dev.r32("SEED") != step.get("seed", 0)))
         # stop load before the statistics are finalised
@@ -207,12 +221,114 @@ def analyse_la(step: dict, data: dict):
         data["la_pulses_after"] = [l.pulses_after for l in lat]
     if "freq_hz" in step and step.get("check_not_above_request"):
         data["freq_checked"] = True
-        data["requests_exceeded"] = [round(f.f_max) for f in fs if f.f_max > step["freq_hz"] * (1 + step.get("tol_pct", 0.5) / 100)]
+        fs_hz = step.get("la_sample_rate_hz")
+        if fs_hz:
+            # n-1: tolerance from the analyser resolution (one sample off in the shortest period), not a guessed percentage
+            limit = 1.0 / (1.0 / step["freq_hz"] - 1.0 / fs_hz) if 1.0 / step["freq_hz"] > 1.0 / fs_hz else float("inf")
+            data["freq_tol_basis"] = f"LA {fs_hz} S/s: 1 sample"
+        else:
+            limit = step["freq_hz"] * (1 + step.get("tol_pct", 0.5) / 100)
+            data["freq_tol_basis"] = f"tol_pct {step.get('tol_pct', 0.5)} % [assumption]"
+        data["requests_exceeded"] = [round(f.f_max) for f in fs if f.f_max > limit]
+    fp = step.get("la_first_periods")
+    if fp:
+        n = int(fp.get("n", 3))
+        res_hz = int(fp.get("res_hz", 10_000_000))
+        f_hz = int(fp.get("freq_hz", step.get("freq_hz", 0)))
+        exp_us = math.ceil(res_hz / f_hz) / res_hz * 1e6          # tick count rounded up: the output never exceeds the request
+        tol_us = 2.0 * 1e6 / float(step.get("la_sample_rate_hz", 10_000_000))    # each edge +-1 sample
+        ch = fp.get("channel", chans[0])
+        per = first_periods(path, ch, n)
+        data["la_first_periods_us"] = per
+        data["first_periods_check"] = {"n": n, "n_found": len(per), "expected_us": exp_us, "tol_us": tol_us,
+                                       "bad": [x for x in per if abs(x - exp_us) > tol_us]}
 
 
-def run_scenario(path: str, target: str, results_dir: str = "results") -> dict:
-    """Run every step of the scenario file against target 'ip:port'. Writes results/<T-ID>_<time>.json and returns
-    {T-ID: [step results]}."""
+def _judge_input(rec: dict) -> dict:
+    step, data = rec["step"], rec["data"]
+    jd = dict(data, freq_hz=step.get("freq_hz", 0), nvs_period_ms=step.get("nvs_period_ms", 0),
+              tcp_clients=(step.get("tcp_load") or {}).get("clients", 0), hmi=bool(step.get("hmi", False)))
+    if "tol_pct" in step:
+        jd["tol_pct"] = step["tol_pct"]
+    return jd
+
+
+def _other_runs_with_hash(results_dir: str, sha: str, self_path):
+    out = []
+    for p in glob.glob(os.path.join(results_dir, "T-*.json")):
+        if self_path and os.path.abspath(p) == os.path.abspath(self_path):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if r.get("data", {}).get("la_sha256") == sha:
+            out.append(os.path.basename(p))
+    return out
+
+
+def capture_check(data: dict, csv_path: str, results_dir: str, self_path=None, slack_s: float = 0.5) -> dict:
+    """N-04: is this CSV the capture of THIS run? (1) modified after the run ended, (2) at least run_s long (first to
+    last row, minus slack_s [assumption]), (3) its sha256 is not recorded by another run. Returns the data fields."""
+    reasons = []
+    with open(csv_path, "rb") as f:
+        sha = hashlib.sha256(f.read()).hexdigest()
+    mtime = os.stat(csv_path).st_mtime
+    end_ts = data.get("run_end_ts")
+    if end_ts is None:
+        reasons.append("실행 종료 시각 기록 없음")
+    elif mtime <= end_ts:
+        reasons.append(f"CSV 수정 시각이 실행 종료보다 {end_ts - mtime:.1f} s 이전(이번 실행 이전에 만들어진 파일)")
+    span = capture_span(csv_path)
+    need = max(0.0, float(data.get("run_s", 0.0)) - slack_s)
+    if span < need:
+        reasons.append(f"캡처 길이 {span:.2f} s < 실행 시간 {data.get('run_s', 0.0):.2f} s - 여유 {slack_s} s")
+    dup = _other_runs_with_hash(results_dir, sha, self_path)
+    if dup:
+        reasons.append(f"같은 CSV(sha256 {sha[:12]})가 다른 실행에도 쓰임: {dup}")
+    return {"la_sha256": sha, "la_csv_mtime": mtime, "la_span_s": span, "la_fresh": not reasons, "la_fresh_reasons": reasons}
+
+
+def attach_capture(rec: dict, csv_path: str, results_dir: str, self_path=None) -> dict:
+    """Adds the capture to a result record that was run without it and judges it (CLI `judge`, or the interactive hook)."""
+    step = dict(rec["step"], la_csv=os.path.abspath(csv_path), _base_dir=".")
+    data = rec["data"]
+    for k in [k for k in data if k.startswith("la_") or k in ("external_count_matches", "freq_checked", "requests_exceeded",
+                                                              "first_periods_check", "freq_tol_basis")]:
+        del data[k]
+    data.update(capture_check(data, csv_path, results_dir, self_path, float(step.get("la_span_slack_s", 0.5))))
+    analyse_la(step, data)
+    rec["step"]["la_csv_attached"] = os.path.abspath(csv_path)
+    rec["verdict"] = judge(rec["id"], _judge_input(rec))
+    return rec
+
+
+def _write(rec: dict, results_dir: str, name: str) -> str:
+    p = os.path.join(results_dir, name)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(rec, f, ensure_ascii=False, indent=1)
+    return p
+
+
+def judge_file(result_json: str, csv_path: str) -> dict:
+    """`judge <result.json> <csv>`: attach the capture to an earlier run and (re)judge it."""
+    with open(result_json, encoding="utf-8") as f:
+        rec = json.load(f)
+    if not rec.get("data"):
+        raise ValueError("result has no run data (the run itself failed)")
+    attach_capture(rec, csv_path, os.path.dirname(os.path.abspath(result_json)), result_json)
+    _write(rec, os.path.dirname(os.path.abspath(result_json)), os.path.basename(result_json))
+    return rec
+
+
+def run_scenario(path: str, target: str, results_dir: str = "results", capture=None) -> dict:
+    """Run every step of the scenario file against target 'ip:port'. Writes results/<T-ID>_<time>_<n>.json and returns
+    {T-ID: [step results]}.
+    N-04: the run and the judgement of logic-analyser data are separate. A step with `la_csv` is left PENDING after the run
+    (run_s and the end time are in the JSON); the capture is attached later with `judge <json> <csv>`. `capture`, if given,
+    is called as capture(step, rec) after the run (the operator exports the capture there) and returns the CSV path; the
+    same checks (modified after the run, long enough, hash unused) apply."""
     sc = _load_file(path)
     base = os.path.dirname(os.path.abspath(path))
     os.makedirs(results_dir, exist_ok=True)
@@ -222,20 +338,24 @@ def run_scenario(path: str, target: str, results_dir: str = "results") -> dict:
         step = dict(step, _base_dir=base)
         t0 = time.strftime("%Y%m%d_%H%M%S")
         rec = {"id": tid, "name": step.get("name", ""), "target": target, "time": t0, "step": {k: v for k, v in step.items() if not k.startswith("_")}}
+        name = f"{tid}_{t0}_{len(out.get(tid, []))}.json"
         try:
             data = run_step(step, target)
-            analyse_la(step, data)
             data["iram_safe"] = step.get("iram_safe")
             rec["data"] = data
-            jd = dict(data, freq_hz=step.get("freq_hz", 0), nvs_period_ms=step.get("nvs_period_ms", 0),
-                      tcp_clients=(step.get("tcp_load") or {}).get("clients", 0), hmi=bool(step.get("hmi", False)))
-            if "tol_pct" in step:
-                jd["tol_pct"] = step["tol_pct"]
-            rec["verdict"] = judge(tid, jd)
-        except (ModbusError, OSError, KeyError) as e:
-            rec["data"] = {}
+            if step.get("la_csv"):
+                csv_path = capture(step, rec) if capture else None
+                if csv_path:
+                    # the file name is known only now: the duplicate-hash check must not count the record itself
+                    attach_capture(rec, csv_path, results_dir, os.path.join(results_dir, name))
+                else:
+                    rec["verdict"] = {"status": "PENDING", "reasons": [
+                        f"로직 분석기 CSV 대기: 실행 종료 후 캡처를 내보내 `judge {name} <csv>`로 붙인다 (run_s={data['run_s']:.1f} s)"]}
+            else:
+                rec["verdict"] = judge(tid, _judge_input(rec))
+        except (ModbusError, OSError, KeyError, ValueError) as e:
+            rec["data"] = rec.get("data") or {}
             rec["verdict"] = {"status": "FAIL", "reasons": [f"실행 오류: {type(e).__name__}: {e}"]}
-        with open(os.path.join(results_dir, f"{tid}_{t0}_{len(out.get(tid, []))}.json"), "w", encoding="utf-8") as f:
-            json.dump(rec, f, ensure_ascii=False, indent=1)
+        _write(rec, results_dir, name)
         out.setdefault(tid, []).append(rec)
     return out

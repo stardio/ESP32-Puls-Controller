@@ -64,6 +64,7 @@ static bool (*s_block_fn)(void);          /* N-03: e-stop block check (set by ma
 static uint32_t s_res_hz, s_upd_us, s_ref_us, s_ns_per_tick, s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static tfw_upd_mode_t s_mode;
 static tfw_upd_stats_t s_upd;
+static volatile bool s_upd_clear_req;      /* n-8: s_upd has ONE writer (update_all); clear_stats only asks */
 static gptimer_handle_t s_gpt;
 static TaskHandle_t s_upd_task;
 static int s_upd_core = -1;
@@ -127,6 +128,7 @@ static bool IRAM_ATTR on_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_d
 
 static void IRAM_ATTR update_all(void)
 {
+    if (s_upd_clear_req) { s_upd_clear_req = false; s_upd.max_us = 0; s_upd.late = 0; s_upd.calls = 0; }
     uint32_t c0 = esp_cpu_get_cycle_count();
     for (uint8_t i = 0; i < s_axis_count; ++i) {
         axis_t *a = &s_ax[i];
@@ -443,7 +445,7 @@ void tfw_pulse2_stats(uint8_t axis, tfw_pulse_stats_t *out)
 
 void tfw_pulse2_clear_stats(void)
 {
-    s_upd.max_us = 0; s_upd.late = 0; s_upd.calls = 0;
+    s_upd_clear_req = true;                    /* n-8: cleared by update_all, its only writer */
     for (int i = 0; i < MAX_AXES; ++i) s_ax[i].isr_lat_ns_max = 0;
 }
 

@@ -87,7 +87,7 @@ def test_report_empty_results_still_14_rows(tmp_path):
 def _run_data(**kw):
     d = dict(wait_status=2, timed_out=False, seq_done=1000, err_ax1=0, err_ax2=0, overshoot_ax1=0, overshoot_ax2=0,
              cmd="RUN_SEQ", repeat=1000, axis_mask=3, param_status=2, param_mismatch=[], clear_ok=True, upd_late=0,
-             la_edges=[10, 20], la_expected_edges=[10, 20])
+             la_edges=[10, 20], la_expected_edges=[10, 20], la_fresh=True)
     d.update(kw)
     return d
 
@@ -103,6 +103,6 @@ def test_judge_rules():
     assert judge("T-03", t03)["status"] == "PASS"
     assert judge("T-03", dict(t03, la_f_avg_hz=[150000.0, 200000.0]))["status"] == "FAIL"
     assert judge("T-03", dict(t03, freq_hz=1000000, la_f_avg_hz=[900000.0, 900000.0]))["status"] == "RECORD"
-    assert judge("T-07", {"relaunch_after_latch": 1})["status"] == "FAIL"
+    assert judge("T-07", {"relaunch_after_latch": 1, "es_last_err": 0, "es_trip_count_before": 0, "es_trip_count": 1})["status"] == "FAIL"
     assert judge("T-09", dict(ok, cmd="RUN_FIXED", repeat=1, seq_done=1, freq_checked=True, requests_exceeded=[300000]))["status"] == "FAIL"
     assert judge("T-10", {})["status"] == "NOT_RUN"

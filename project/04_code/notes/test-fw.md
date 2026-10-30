@@ -9,6 +9,7 @@
 
 ## 0. 상태 요약 (먼저 읽을 것)
 
+- **리뷰 2차 반영(반복 3회차, 마지막, 2026-10-30)**: §9에 지적별 반영·반박 표가 있다. 달라진 부분은 §9가 §8보다 우선한다. 결과는 §3 끝의 "3회차 결과".
 - **리뷰 1차 반영(반복 2회차, 2026-10-30)**: 아래 §8에 지적별 반영·반박 표가 있다. §1~§7은 1회차 기록이며, 달라진 부분은 §8이 우선한다(테스트 수·결과는 §3 끝의 "2회차 결과", 축2 핀 기본값은 §8).
 
 - **호스트에서 실행·검증한 것**: 하드웨어와 무관한 로직 전부(프로파일, 주파수 분해능, 레지스터 창 인코딩·범위검사, 시퀀서, 판정, 비상정지 래치 규칙, Modbus PDU 엔진, TFW-05 Python 도구).
@@ -103,6 +104,22 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 - **회귀 시험이 실제로 결함을 잡는지 확인**: 1회차 코드(`git archive HEAD`)를 임시 폴더에 풀어 새 `test_judge_regress.py`/`test_firmware_static.py`를 돌리면 166건 실패, 7건 통과(대부분 판정 키 누락·미구현 항목). 새 판정 규칙에서는 거짓 합격 시나리오(거부·타임아웃·중단·외부 계수 없음·접속 거부·NVS 부하 0·iram 불일치)가 모두 PASS가 아니다.
 - 기존 시험 변경: `test_run_scenario_t03_to_t09_with_mock`의 T-04 기대값을 PASS에서 NOT_RUN으로, `test_judge_rules`는 판정 입력 계약(실행 결과 키 필수)에 맞춰 입력을 완전한 실행 결과로 바꿨다. 이는 1회차 판정이 "반복 10회, 외부 계수 없음, 완료 확인 없음"에서 PASS를 낸 것이 결함이었기 때문이며 기준을 낮춘 것이 아니라 높인 것이다.
 
+### 3회차 결과 (리뷰 2차 반영 후, 실제 실행 그대로, 2026-10-30)
+
+```
+$ cd project/04_code/tests/test-fw && make run
+  (gcc -std=c11 -Wall -Wextra -O1 ... -lm, 경고 없음)
+  41개 테스트 함수 전부 PASS, checks=16591 failed=0
+
+$ cd project/04_code/tests/test-fw && python3 -m pytest -q
+  262 passed in 42.26s
+```
+
+- 2회차 대비 C 3개 함수(`t_r2_seq_*`, 검사 +8건), pytest +50건(`test_round2_regress.py` 29, `test_cfg_syntax.py` 21).
+- **회귀 시험이 2회차 코드에서 실패함을 확인**: 2회차 소스를 복사해 둔 임시 폴더에 새 시험을 덮어 실행(모의 서버 `mock.py`만 새 것으로 교체, 새 함수 이름 `judge_file`/`first_periods`는 import 오류를 피하려고 빈 껍데기를 붙임). 결과: pytest 새 시험 파일 2개 48건(n-3·n-8 시험 2건을 추가하기 전 시점) 중 **44건 실패**, 4건 통과(통과한 4건은 시험 도구 자체 검사 `test_stub_follows_the_bool_rule`, `test_n01_stub_check_detects_the_round2_defect`, 그리고 iram_on/legacy 조합의 `tfw_estop_io.c`로, 이 조합에서는 해당 매크로가 정의되어 2회차 코드도 컴파일되므로 리뷰 N-01 설명과 일치). C 시험은 2회차 `tfw_seq.c`로 빌드하면 새 함수 3개가 모두 실패(`failed=5`). 기존 시험 중 2회차 코드에서 13건이 실패하는 것은 판정 입력 계약(`la_fresh` 등)을 바꾼 시험을 2회차 코드에 돌렸기 때문이다.
+- 기존 시험 변경(기준을 낮춘 것이 아니라 새 계약에 맞춘 것): 판정 입력의 `base()`에 `la_fresh`·`mb_clients_min`·`dropped`/`idle_clients` 추가, e2e 시험은 CSV를 **운전 전에** 만들던 순서를 운전 **후** 내보내는 순서(`capture` 훅)로 변경, T-07 시험에 `es_last_err`·`es_trip_count` 전제 추가, `test_m04...`가 고정 문자열로 확인하던 `tfw_estop_blocking` 반환식을 `!s_init_ok || ...`로 갱신.
+- 도중 실패 이력: (1) 새 e2e 시험에서 무작위 seed(T-04, seed != 0)를 쓰면 기대 엣지 수가 2,000이 아니어서 FAIL -> 시험 입력 오류, 시험 시나리오에서 seed를 뺌. (2) 부하 단절 시험에서 가짜 서버가 MBAP 길이 필드를 4바이트로 잘못 보냄(시험 오류). (3) 정적 시험이 주석 속 `pcnt_unit_clear_count` 단어를 코드로 읽음 -> 호출 형태(`(a->pcnt)`)로 좁힘. 코드 결함으로 이어진 실패는 없었다.
+
 ### 완료 기준별 검증 현황
 
 | 모듈 | # | 기준 | 호스트에서 검증한 부분 | 남은 것 |
@@ -136,6 +153,8 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 4. **플래시·모니터** (사용자 실행): `idf.py -B build_on -p <PORT> flash monitor`. 부팅 로그에서 칩 리비전, CPU 클록, 해상도·갱신 주기, IRAM 옵션, 핀 배정, `CAPS ...`(그룹 1, 제너레이터 2, PCNT 채널 2, max_period_ticks), `bind_ok`, GPIO19 부팅 레벨을 기록한다. 축2 실패 시 `AXIS 2 UNAVAILABLE`과 오류 코드가 나온다.
 5. **PC 도구**: `cd test-fw/host && python3 -m tfw_host.cli run scenario_example.yaml --target 192.168.0.220:502 --results results` 후 `python3 -m tfw_host.cli report results reports/report_G3_pretest.md`. `results/meta.json`에 빌드 해시·sdkconfig 차이·장비를 직접 적는다. 로직 분석기 채널 이름은 CSV 헤더와 시나리오의 `la_pulse_channels`/`la_trigger_channel`을 맞춘다.
 6. **T-05**: `TFW_MAX_CLIENTS=8`로 따로 빌드(제어 연결 + 부하 4 + HMI). 5번째 접속 거부 확인(TFW-03 #4)은 기본값 4 빌드로 한다.
+6a. **M-05 (정지 후 첫 주기)**: 시나리오의 T-09 세 단계(1 MHz -> 5 kHz -> 1 MHz)는 **단계마다 별도 캡처 파일**을 쓴다. 캡처를 시작한 뒤 `run`(또는 `--wait-capture`)을 실행하고, 운전이 끝나면 캡처를 멈춰 내보낸다. `run`은 LA CSV가 필요한 단계를 PENDING으로 남기므로 `python3 -m tfw_host.cli judge results/<T-ID>_<시각>_<n>.json <캡처.csv>`로 판정한다(CSV 수정 시각이 운전 종료 이후이고, 길이가 운전 시간 - 0.5 s [가정] 이상이며, 같은 파일을 다른 실행에 쓰지 않아야 한다). 5 kHz 단계는 첫 3주기가 200 us ± LA 2샘플이어야 하고, 1 MHz로 돌아오는 단계는 첫 3주기가 1 us ± 2샘플이어야 한다(긴 쪽·짧은 쪽 모두 FAIL).
+6b. **M-02 확인 (리뷰 2차 §3-1 조건 2·3)**: HWTIMER 모드 첫 이동 전에 (a) IDF 5.5 문서 "FreeRTOS (IDF) - Floating Point Usage"에서 ESP32-P4 항목(ISR 안 FPU 허용 여부)을 확인해 결과를 보고서에 적거나, (b) HWTIMER 운전 중 별도 태스크에서 float 검사합을 계속 계산해 불일치 0을 확인한다(태스크 FPU 레지스터 손상은 패닉 없이 조용히 틀리므로 "1회 이동에 패닉 없음"만으로는 부족하다). 불일치가 나오거나 (a)가 금지이면 `CONFIG_TFW_UPD_MODE_HWTIMER=n`(TASK 모드)로 비교한다. 이제 이 TASK 모드 빌드도 컴파일된다(N-01 수정).
 7. **T-07**: GPIO19를 수동 스위치 또는 별도 디지털 출력으로 구동하고 `es_path_sel`(0x7060)로 경로를 바꾼다. 해제는 0x7061에 1.
 
 ## 5. 설계와 다른 점
@@ -229,3 +248,47 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 4. **ISR 우선순위 배치(architect)**: 비상정지 > 감시점 > 갱신 > 통신 순서를 TFW-02/04 제약에 명시할지(T-07·T-08 해석의 전제). 현재는 Kconfig 기본값으로 구현했고 P4에서의 효과는 미확인.
 5. **ISR 안 FPU(M-02)**와 MOD-07 연산 형식: 1회차 이슈 5에 "IDF 5.5 FreeRTOS(IDF) 문서의 FPU 사용 제한 확인 필요"를 추가한다.
 6. 위 모든 펌웨어 변경은 **빌드되지 않았다**. 첫 빌드 오류는 §6 목록과 이번에 추가한 `intr_priority` 필드, `esp_cpu_get_core_id` 사용 부분부터 확인한다.
+
+## 9. 리뷰 2차(`reviews/test-fw-review-2.md`) 지적별 반영·반박 (반복 3회차, 마지막)
+
+판정 요약: 지적 Critical 1, Major 5(N-01, N-02, N-03, R-01, M-05), Minor 8 중 **반박 0**. Critical·Major 6건 전부 코드와 시험으로 반영. Minor 8 중 반영 4(n-1, n-2, n-3, n-8), 부분 반영 1(n-5), 이슈 제기·보류 3(n-4, n-6, n-7). 펌웨어 C는 여전히 **ESP-IDF 빌드·실장비 실행 없음**이다. 이번에 추가된 것은 스텁 문법 검사와 호스트 빌드 시험뿐이며, 스텁의 IDF 시그니처는 기억 기반이라 실제 헤더와 대조되지 않았다.
+
+### Critical / Major
+
+| ID | 결과 | 반영 내용 | 증명 시험 (2회차 코드에서 실패 확인) |
+|---|---|---|---|
+| N-04 | 반영 | **실행과 판정 분리.** `run_scenario`는 `la_csv`가 있는 단계를 운전 후 **PENDING**으로 남기고 `run_start_ts`/`run_end_ts`/`run_s`를 JSON에 저장. 새 CLI `judge <result.json> <csv>`(또는 `run --wait-capture`의 대화형 정지, 또는 `capture` 훅)가 CSV를 붙이며 `capture_check`로 (1) CSV 수정 시각 > 운전 종료, (2) 첫~끝 행 길이 >= run_s - 0.5 s [가정], (3) sha256이 다른 실행 기록에 없음을 확인. 하나라도 어기면 `la_fresh=False`. 판정은 `_la_gate`가 LA 계열 키(`la_edges` 등)가 있는데 `la_fresh`가 True가 아니면 FAIL("묵은 캡처"). T-03/04/05/06/07/09 모두 적용. 보고서는 PENDING을 "판정 대기"로 표기. `scenario_example.yaml` 머리말과 §4 6a에 절차 기재 | `test_n04_*` 6건: 증거 없는 LA 데이터 FAIL(5 T-ID), **운전 전에 만든 CSV**는 PENDING 또는 FAIL, **같은 CSV 재사용** FAIL, 짧은 캡처 FAIL, run -> judge 흐름 PASS/FAIL, CLI 존재 |
+| N-01 | 반영 | 새 `tfw_logic/include/tfw_cfg.h`: 항상 정의되는 0/1 보조 매크로(`TFW_B_UPD_MODE_HWTIMER`, `TFW_B_ESTOP_ACTIVE_LOW`, `TFW_B_LEGACY_NVS_ON_WRITE`, `TFW_B_PCNT_ISR_IRAM_SAFE`)를 `#if defined(...) && ...`로 정의(`sdkconfig.h`를 먼저 include). `tfw_main.c`, `tfw_estop_io.c`의 C 식 사용을 모두 교체. bool 옵션은 `#if`에서만 쓴다 | `test_cfg_syntax.py`: Kconfig를 읽어 **ESP-IDF 규칙**(int은 항상 정의, bool y는 1, n은 미정의)으로 `sdkconfig.h`를 만들고 7개 조합(기본, iram_on, iram_off, TASK 모드, active_high, legacy_nvs, iram_off+TASK+active_high) x 2개 파일(`tfw_main.c`, `tfw_estop_io.c`)을 `gcc -fsyntax-only`. 자체 검증으로 결함 코드가 실제로 실패함도 확인. `test_n01_bool_config_macros_are_used_only_in_preprocessor_conditions`: 모든 C/H 파일에서 bool `CONFIG_`가 `#if` 밖에 없음 |
+| N-02 | 반영 | `tfw_estop_init`을 래퍼로 감싸 **성공했을 때만** `s_init_ok = true`. `tfw_estop_blocking()`은 `!s_init_ok ||` 래치/입력 활성. 초기화 전·실패(gpio_config, ISR 서비스, 핸들러 등록, 태스크 생성) 시 RUN·레거시 START 거부(0x10). 실패는 `es_last_err`에, 서비스 기설치(레벨·IRAM 플래그 미적용)도 `es_last_err = ESP_ERR_INVALID_STATE`로 내보냄(차단은 안 함). `app_main` 오류 로그에 "ALL motion commands are refused" 명시. **판정**: T-07은 `es_last_err == 0`과 실행 중 `es_trip_count` 증가(`es_trip_count_before`는 운전 전에 읽음)를 요구, 아니면 NOT_RUN | `estop_host/test_estop_host.c`: 실제 `tfw_estop_io.c`를 호스트에서 컴파일하고 IDF 호출을 제어 가능한 스텁으로 바꿔 실행(29건): 초기화 전 차단, 4가지 단계 실패 각각 차단, 정상 초기화는 차단 안 함, 서비스 기설치 `last_err` 노출, 부팅 시 활성이면 래치. `test_n02_*` 3건(판정·모의 장치) |
+| N-03 | 반영 | (a) `es_isr`: 래치(`tfw_es_trip`)를 **정지보다 먼저** 수행. (b) `start_common`: 시작 전에 `s_block_fn()`(= `tfw_estop_blocking`, `tfw_pulse2_set_block_fn`으로 main이 등록)이면 거부 -> `pcnt_unit_clear_count`가 트립 후 계수를 지우지 않음. 타이머 시작 **후** 한 번 더 확인해 래치면 `tfw_pulse2_stop`. (c) `hw_move`/`hw_fixed`가 차단 중이면 -1. (d) `tfw_seq_run`: 반복 시작 시와 **축별 시작 직전** `aborted()` 확인, 시작이 트립 때문에 거부되면 오차가 아니라 중단으로 처리 | C: `t_r2_seq_no_move_after_trip_between_iterations`(반복 사이 트립 뒤 move 호출 0건), `t_r2_seq_no_second_axis_start_after_trip`, `t_r2_seq_start_refused_by_trip_is_abort_not_pulse_error`. 호스트: `t_isr_latches_before_it_stops`(정지 시점에 래치 이미 true). 정적: `test_n03_*` 3건. **한계**: `start_common`의 실제 경쟁(ISR 끼어들기)은 호스트로 재현 못 함, 소스 형태 확인만 |
+| R-01 | 반영 | 실행 중 `MB_CLIENTS` **최솟값**(`mb_clients_min`; 안정화 `settle_s` 기본 1 s 이전 샘플 제외, 마지막 샘플은 항상 포함)을 기록하고 `min >= 1+부하+HMI`를 합격 전제로 함. 부하 클라이언트별 `dropped`(운전 중 연결 끊김)·`idle_clients`(요청 0건)를 세어 0이 아니면 FAIL, `errors > 0`은 사유로 기록. 최솟값 미측정이면 NOT_RUN | `test_r01_*` 3건(최솟값 3이면 FAIL, 키 없으면 NOT_RUN, dropped/idle FAIL, 실제 연결을 끊는 가짜 서버에서 `dropped == 1`, e2e) |
+| M-05 | 반영(HIL 확인은 남음) | `scenario_example.yaml`: 선행 `RUN_FIXED 1 MHz` -> 5 kHz -> 다시 1 MHz 3단계. `la.first_periods`와 `analyse_la(la_first_periods)`: 첫 n(기본 3)주기가 기대 주기(res 올림 틱) ± LA 2샘플 안이어야 하며 **짧은 쪽·긴 쪽 모두** FAIL(긴 쪽 사유 "이전 주기 잔류"). 주기 수 부족이면 NOT_RUN. CSV는 N-04 규칙으로 붙임 | `test_m05_*` 5건: 5 kHz 뒤 짧은 첫 주기 FAIL, **1 MHz로 돌아올 때 긴 첫 주기 FAIL(2회차 규칙 `requests_exceeded`는 []로 못 잡던 경우)**, 주기 부족 NOT_RUN, 예시 시나리오 순서 |
+
+### Minor
+
+| ID | 결과 | 내용 |
+|---|---|---|
+| n-1 | 반영 | 시나리오에 `la_sample_rate_hz`가 있으면 "요청 초과" 한계를 LA 샘플 1개 분해능으로 계산(`1/(1/f - 1/fs)`)하고 근거를 `freq_tol_basis`로 기록. 없으면 `tol_pct`(가정) 유지. T-09 예시 단계는 50 MS/s [가정]를 지정. `test_n1_*` |
+| n-2 | 반영 | 첫 SEED 읽기가 타임아웃이면 FC16을 보내지 않고 종료(idle로 집계). `test_n2_first_seed_read_timeout_does_not_write_zero` |
+| n-3 | 반영 | `check_iram.sh` 점검 목록에 `mcpwm_timer_start_stop` 추가, IRAM이 아니면 경로 A를 force-level만으로 바꾸는 판단 기준을 주석에 명시. 판단은 첫 실측 후. `test_n3_*` |
+| n-4 | 이슈 제기 | 빌드 극성을 읽는 레지스터는 주소 배정이 architect 몫(리뷰 이슈 3). 시나리오 값끼리의 대조는 유지, 장치 값 대조는 주소 배정 후 |
+| n-5 | 부분 반영 | 시퀀서·레거시 START가 같은 축을 동시에 시작하는 경쟁은 `hw_move`/`hw_fixed`에서 차단 검사를 추가한 것 외에는 **그대로**. 축 단위 뮤텍스는 설계에 없는 구조 변경이라 보류, 이슈로 남김 |
+| n-6 | 보류 | 옵션별 IRAM 비트는 `cfg_flags`의 의미 변경(주소·비트 배정은 architect). 대신 §4 절차 3의 sdkconfig grep과 부팅 로그의 IRAM 옵션 줄을 보고서에 첨부하도록 유지 |
+| n-7 | 보류 | 외부 토털라이저 입력(`ext_edges`)은 장비 결정(리뷰 이슈 4, 사용자)이 먼저. 지금은 LA 연속 캡처가 안 되면 T-04/05/06이 NOT_RUN으로 남는다 |
+| n-8 | 반영 | `tfw_pulse2_clear_stats`는 `s_upd_clear_req` 플래그만 세우고 `update_all`(유일한 쓰기 주체)이 지움. `test_n8_*` (`isr_lat_ns_max`는 ISR이 쓰는 값을 태스크가 0으로 쓰는 구조가 남아 있음: 갱신 손실은 CLEAR 직후 한 번 가능) |
+
+### 설계와 다른 점 (3회차 추가)
+
+| # | 설계서 | 구현 | 사유 |
+|---|---|---|---|
+| 17 | TFW-05: 실행 후 LA CSV로 판정 | 실행(PENDING)과 판정(`judge`)이 분리, 결과 JSON에 `run_start_ts`/`run_end_ts`/`la_sha256`/`la_fresh` 추가, CLI `judge` 추가 | N-04 |
+| 18 | TFW-04: 초기화 실패 때의 동작 미정 | 초기화가 끝나기 전·실패 시 모든 운전 명령 거부(영구 차단) | N-02. 리뷰 이슈 2(architect)가 확정 전까지의 안전한 쪽 구현 |
+| 19 | TFW-02: 시작 API에 비상정지 연동 없음 | `tfw_pulse2_set_block_fn` 추가(시작 전·후 래치 확인) | N-03 |
+| 20 | (시험 도구) | 시험 폴더에 ESP-IDF 스텁(`tests/test-fw/idf_stub/`)과 호스트 빌드 시험(`estop_host/`) 추가 | N-01/N-02 증명. 스텁은 기억 기반이라 실제 API 정합성을 증명하지 않음 |
+
+### 남은 위험 / 이슈 제기 (3회차)
+
+1. ESP-IDF 빌드·HIL은 여전히 한 번도 실행되지 않았다. 스텁 문법 검사는 bool 옵션 매크로와 두 파일(`tfw_main.c`, `tfw_estop_io.c`)만 다룬다. `tfw_pulse2.c`, `tfw_modbus.c`는 스텁 범위 밖(EMAC/lwIP/GPTimer 구조체가 많음)이며 이들의 bool 사용은 정적 시험으로만 확인된다.
+2. `start_common`의 ISR 경쟁(N-03 a)은 "래치 선행 + 시작 후 재확인"으로 닫았다고 판단하지만, 다른 코어에서 병렬로 실행될 때의 모든 인터리빙을 증명한 것은 아니다. HIL T-07에서 트립 후 펄스 0을 LA로 확인해야 한다.
+3. LA 캡처 길이 검사의 여유 0.5 s와 안정화 1 s, 주기 허용 2샘플은 [가정]이다. CSV에 유휴 구간이 기록되지 않으면 길이가 실제 캡처보다 짧게 보이므로(보수적), 정상 캡처가 FAIL이 될 수 있다 -> 첫 실측에서 조정.
+4. (architect) 리뷰 이슈 2·3(초기화 실패 동작, 빌드 극성·옵션별 IRAM 비트의 주소)과 (사용자) 이슈 4(외부 계수 장비)는 열려 있다.

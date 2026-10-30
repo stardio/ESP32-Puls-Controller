@@ -293,11 +293,16 @@ typedef struct {
     bool abort_flag; uint32_t abort_after_ms;
     bool fail_start[2];
     uint32_t stops;
+    bool trip_when_idle_after_move;   /* R2 N-03: aborted() is true once axis 0 has moved and nothing is busy (trip between iterations) */
+    bool trip_after_ax0_start;        /* R2 N-03: aborted() is true as soon as axis 0 was started */
+    bool trip_on_first_move_call;     /* R2 N-03: the first move call fails and the trip flag appears (race with the ISR) */
+    bool tripped;
 } fake_t;
 static int f_move(void *c, uint8_t ax, uint32_t sp, uint32_t cnt, uint32_t a, uint32_t d)
 {
     fake_t *f = c; (void)sp; (void)a; (void)d;
     if (f->fail_start[ax]) return -1;
+    if (f->trip_on_first_move_call && !f->tripped) { f->tripped = true; return -1; }
     f->target[ax] = cnt; f->pcnt[ax] = 0; f->busy[ax] = true; f->steps_left[ax] = 3; f->moves[ax]++;
     return 0;
 }
@@ -319,7 +324,14 @@ static void f_delay(void *c, uint32_t ms)
     }
 }
 static uint32_t f_now(void *c) { return ((fake_t *)c)->now; }
-static bool f_aborted(void *c) { fake_t *f = c; return f->abort_flag && f->now >= f->abort_after_ms; }
+static bool f_aborted(void *c)
+{
+    fake_t *f = c;
+    if (f->tripped) return true;
+    if (f->trip_when_idle_after_move && f->moves[0] >= 1 && !f->busy[0] && !f->busy[1]) return true;
+    if (f->trip_after_ax0_start && f->moves[0] >= 1) return true;
+    return f->abort_flag && f->now >= f->abort_after_ms;
+}
 static tfw_seq_hw_t hw_for(fake_t *f)
 {
     tfw_seq_hw_t h = {f, f_move, f_fixed, f_busy, f_count, f_stop, f_delay, f_now, f_aborted};
@@ -603,6 +615,37 @@ TEST(t_r1_seq_aborted_run_leaves_idle_and_short_seq_done)   /* C-01 premise: the
     CHECK(w.status == TFW_ST_IDLE && res.seq_done == n && n < 1000);
 }
 
+/* ---- review round 2, N-03: no motion may start after a trip ---- */
+TEST(t_r2_seq_no_move_after_trip_between_iterations)
+{
+    fake_t f; memset(&f, 0, sizeof f); tfw_seq_hw_t h = hw_for(&f);
+    tfw_regwin_t w; tfw_regwin_init(&w, 0); static volatile tfw_results_t res; memset((void *)&res, 0, sizeof res);
+    w.axis_mask = 3; w.repeat = 5; w.count = 1000; f.trip_when_idle_after_move = true;
+    uint32_t n = tfw_seq_run(&h, &w, &res, TFW_CMD_RUN_SEQ);
+    CHECK(f.moves[0] == 1 && f.moves[1] == 1);          /* round 2 code started a second iteration with the latch set */
+    CHECK(n == 1 && w.status == TFW_ST_IDLE && res.seq_done == 1);
+}
+TEST(t_r2_seq_no_second_axis_start_after_trip)
+{
+    fake_t f; memset(&f, 0, sizeof f); tfw_seq_hw_t h = hw_for(&f);
+    tfw_regwin_t w; tfw_regwin_init(&w, 0); static volatile tfw_results_t res; memset((void *)&res, 0, sizeof res);
+    w.axis_mask = 3; w.repeat = 3; w.count = 1000; f.trip_after_ax0_start = true;
+    uint32_t n = tfw_seq_run(&h, &w, &res, TFW_CMD_RUN_SEQ);
+    CHECK(f.moves[0] == 1 && f.moves[1] == 0);
+    CHECK(f.stops >= 1);                                 /* the axis that had started is stopped */
+    CHECK(n == 0 && w.status == TFW_ST_IDLE);
+}
+TEST(t_r2_seq_start_refused_by_trip_is_abort_not_pulse_error)
+{
+    fake_t f; memset(&f, 0, sizeof f); tfw_seq_hw_t h = hw_for(&f);
+    tfw_regwin_t w; tfw_regwin_init(&w, 0); static volatile tfw_results_t res; memset((void *)&res, 0, sizeof res);
+    w.axis_mask = 3; w.repeat = 3; w.count = 1000; f.trip_on_first_move_call = true;
+    uint32_t n = tfw_seq_run(&h, &w, &res, TFW_CMD_RUN_SEQ);
+    CHECK(res.err[0] == 0 && res.err[1] == 0);
+    CHECK(f.moves[0] == 0 && f.moves[1] == 0);
+    CHECK(n == 0 && w.status == TFW_ST_IDLE);
+}
+
 int main(void)
 {
     RUN(t_ticks_never_exceed_request); RUN(t_old_floor_rule_would_exceed); RUN(t_ticks_limits); RUN(t_total_count);
@@ -619,6 +662,8 @@ int main(void)
     RUN(t_r1_estop_active_at_boot_latches_and_blocks); RUN(t_r1_input_active_blocks_even_when_not_latched);
     RUN(t_r1_sat_mul_no_wrap); RUN(t_r1_task_mode_reference_period); RUN(t_r1_pin_conflict); RUN(t_r1_max_clients_register);
     RUN(t_r1_seq_aborted_run_leaves_idle_and_short_seq_done);
+    RUN(t_r2_seq_no_move_after_trip_between_iterations); RUN(t_r2_seq_no_second_axis_start_after_trip);
+    RUN(t_r2_seq_start_refused_by_trip_is_abort_not_pulse_error);
     printf("\nchecks=%d failed=%d\n", g_run, g_fail);
     return g_fail ? 1 : 0;
 }
