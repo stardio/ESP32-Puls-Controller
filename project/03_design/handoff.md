@@ -10,10 +10,10 @@
 ## 1. 산출물 목록
 | 파일 | 내용 요약(1줄) | 상태 |
 |---|---|---|
-| project/03_design/architecture.md | v0.3: ESP32-P4 + MCPWM/PCNT + IP101 기준선, STM32F407 대안·전환 조건, 2축 자원(§4.3), 기존 코드 대응(§3.2), 위험 R-01~R-21, 실측 T-01~T-14, PS 재조사 9건, DC-01~18 | 초안(G3 대상) |
+| project/03_design/architecture.md | v0.3.1(T-05 접속 조건·DC-19 추가, TFW-01~03 v0.2 정정) / v0.3: ESP32-P4 + MCPWM/PCNT + IP101 기준선, STM32F407 대안·전환 조건, 2축 자원(§4.3), 기존 코드 대응(§3.2), 위험 R-01~R-21, 실측 T-01~T-14, PS 재조사 9건, DC-01~18 | 초안(G3 대상) |
 | project/03_design/interface-spec.md | v0.2: ESP32-P4 핀맵, 레지스터 맵 통합안(레거시 창 §5.0), 하위 워드 먼저, 시스템 영역 0x0020~, 비상정지 GPIO19·MCPWM 고장 입력 | 초안(G3 대상) |
 | project/03_design/modules/MOD-01~25 | 제품 모듈 25개. v0.2 개정: MOD-02, 04, 07, 10, 14, 15, 24 | 초안 |
-| project/03_design/modules/TFW-01~05 | **G3 전 시험 펌웨어 5개**(D-025): tfw_main, tfw_pulse2, tfw_modbus, tfw_estop_io, tfw_host | 착수 가능 |
+| project/03_design/modules/TFW-01~05 | **G3 전 시험 펌웨어 5개**(D-025): tfw_main, tfw_pulse2, tfw_modbus, tfw_estop_io, tfw_host. 2026-10-30 정정: TFW-01 v0.2(0x7040~0x7047 출력 전용), TFW-02 v0.2(축2 핀 기본 -1), TFW-03 v0.2(0x705E `mb_max_clients`, `TFW_MAX_CLIENTS`) | 착수 가능 |
 | project/03_design/parts-comparison.md, bom-draft.md | parts-selector 작성(v0.1, STM32 기준) → PS-28로 재집계 요청 | 갱신 필요 |
 
 ## 2. 다음 단계가 반드시 알아야 할 핵심 내용 (최대 10줄)
@@ -28,7 +28,7 @@
 9. 모듈 대응: 재사용 0, 수정 후 재사용 13, 신규 12(architecture §3.2). 래더 코드는 쓰지 않는다.
 10. 원가: v0.2 집계(STM32 기준)는 무효. ESP32-P4 탑재 형태(보드/모듈/칩) 가격은 parts-selector 재조사(PS-23·28) 후 DC-13으로 판정.
 
-## 3. 결정 후보 (사용자 확정 필요 → decisions.md) — 18건
+## 3. 결정 후보 (사용자 확정 필요 → decisions.md) — 19건
 | # | 후보 내용 | 근거 |
 |---|---|---|
 | DC-01 (갱신) | MCU ESP32-P4 최종 확정, STM32F407 대안(전환 조건 5개) | architecture §4.5 |
@@ -49,6 +49,7 @@
 | DC-16 (갱신) | MT8051iP 프로젝트 기준선 확장, 5/7인치 기종 선정, 이지뷰 = Weintek 확인 | R-21 |
 | DC-17 (신규) | GPIO19 = 비상정지 감시 입력, NC 기준 극성 반전 | §2.6 |
 | DC-18 (신규) | `svon_mode` 자동(기본, 기존 호환)/명령 유지형 | §2.4 #7 |
+| DC-19 (신규, v0.3.1) | T-05 접속 수: **권고 (a)** 조건 유지(부하 4 + HMI 1 + 제어 1 = 6), T-05는 `TFW_MAX_CLIENTS` ≥ 6 빌드, 접속 수 = 전체 TCP 접속. 대안 (b) 최대 4 유지 + 부하 2로 축소. T-05 실행 전 확정 필요 | architecture §8.2, §6.1 T-05 |
 
 ## 4. 미확인·가정 목록
 | # | 항목 | 태그 | 해소 방법 |
