@@ -45,10 +45,10 @@
 | I-019 | 2026-10-30 | requirements-analyst | 01_market (SRS §9 #3, HO2 §5 #3) | KC EMC 대상 여부는 국립전파연구원 고시 원문 확인 필요(STD-001). 무선 인증은 v1 제외로 우선순위 낮음 | 미해결 |
 | I-021 | 2026-10-30 | requirements-analyst | 01_market/summary.md (SRS §9 #5, HO2 §5 #4) | summary.md는 Wi-Fi/웹 설정을 차별화 기회로 적었으나 SRS는 v1 제외(FR-017). G2 승인 기록에 정정 여부 결정 없음. 사용자 확인 필요 | 미해결 |
 | I-023 | 2026-10-30 | requirements-analyst | 01_market (SRS §9 #7, HO2 §5 #3 후단) | 엔코더 입력 v1 제외 확정(D-012)으로 LS XGF-PO3H 피드백 입력 원문 대조는 v2 자료로만 필요 | 미해결(우선순위 낮음) |
-| I-024 | 2026-10-30 | requirements-analyst | 03_design / 01_market (SRS §9 #8, HO2 §5 #5) | 두산 서보 라인업·펄스 열 입력 지원·입력 형식·분해능·최고 회전수 미확인. ③ HO §4 #8도 미확인(PS-20, Q1-잔여). 펄스 열 입력형이 없으면 D-009 재검토 후보 | 미해결(③ 산출물에서도 미확인, G3 전 확인) |
+| I-024 | 2026-10-30 | requirements-analyst | 03_design / 01_market (SRS §9 #8, HO2 §5 #5) | 두산 서보 라인업·펄스 열 입력 지원·입력 형식·분해능·최고 회전수 미확인. ③ HO §4 #8도 미확인(PS-20, Q1-잔여). 펄스 열 입력형이 없으면 D-009 재검토 후보 | 대체됨(D-026: 두산→대우. 대우 드라이브 모델·입력 사양은 미확인) |
 | I-025 | 2026-10-30 | requirements-analyst | 03_design (SRS §9 #9, HO2 §5 #5) | 2축 동시 축당 ≥ 200 kpps 근거. ③은 하드웨어 타이머 방식(C1)을 제시했으나 실측 전(T-01~T-04, HO §4 #3 미확인). 실측 후 해소 판단 | 미해결(실측 대기) |
 | I-026 | 2026-10-30 | requirements-analyst / architect / parts-selector | 03_design (HO2 §5 #5, architecture #9, parts #3, HO3 #5) | NFR-005(b) 24 V OC 연결: 드라이브 OC 입력 한도 200 kpps(제3자 자료)로 D-007 하한에 여유 0. 보증 상한 = min(T-06 실측, 200 kpps) 제안(DC-11). SRS 문구 유지 여부 판단 필요. 공식 매뉴얼 대조 후 SRS §3.1 반영 판단 | 미해결(G3 보고, T-06 대기) |
-| I-027 | 2026-10-30 | architect / 메인 세션 | 03_design (architecture #3, HO3 #1, DC-10) | G3 전 실측 T-01~T-09에 시험 펌웨어(HO §7.2 1단계)가 필요하나 코드는 ④ 몫. 착수 예외 허용 여부와 ③ 내 담당 주체 결정 필요. 참고: architecture #3은 T-01~T-06, HO는 T-01~T-09로 범위 표기가 다름 | 미해결(사용자 결정 필요) |
+| I-027 | 2026-10-30 | architect / 메인 세션 | 03_design (architecture #3, HO3 #1, DC-10) | G3 전 실측 T-01~T-09에 시험 펌웨어(HO §7.2 1단계)가 필요하나 코드는 ④ 몫. 착수 예외 허용 여부와 ③ 내 담당 주체 결정 필요. 참고: architecture #3은 T-01~T-06, HO는 T-01~T-09로 범위 표기가 다름 | 해소(D-025: 시험 펌웨어 예외 허용) |
 | I-028 | 2026-10-30 | architect / handoff | 파이프라인 (architecture #10, HO3 #2) | 회로도·PCB·기구 설계 담당 단계·에이전트 없음. HW 전용 필수 4건(NFR-007·009·012·017)과 HW 열 항목 담당 미정. 산출물 위치·담당 결정 필요 | 미해결(사용자 결정 필요, G3 전) |
 | I-029 | 2026-10-30 | architect / parts-selector | 03_design (R-07, architecture #8, bom #1·3, parts #1, HO3 #7, DC-12·13) | 2축 모델 BOM 확인값 약 91,400원([가정] 환율)으로 9만원 초과 위험. 환율·수량 시나리오(Q11-잔여)와 절감 우선순위 결정 필요. 기구·단자대 국내 조달가 미확인 | 미해결(사용자 결정 필요) |
 | I-030 | 2026-10-30 | architect | 02_requirements NFR-009 (architecture #1·2, DC-04) | 펄스 출력이 I/O 절연 대상인지 SRS에 명시 없음(원가 영향 큼). 이더넷 절연 요구값은 IEEE 802.3 원문 확인 전 미확인 | 미해결(G3 결정 필요) |
@@ -62,7 +62,8 @@
 | I-038 | 2026-10-30 | architect | 02_requirements FR-023(c)·FR-012 (interface-spec #5·6, HO3 #3·6, DC-16) | "운전에 필요한 파라미터" 목록(interface-spec §5.6) 제안, JOG 유지 상실 시 감속 정지는 FR-012와 별개 [가정]. G3 확인 필요. SRS 미수정 | 미해결(G3 확인) |
 | I-039 | 2026-10-30 | parts-selector | 03_design (parts #5, bom #4) | STM32F407G-DISC1에 이더넷 없을 가능성: T-01~T-04 장비 구성 재확인. 하우징 폭 22.5 mm와 2축 PCB·RJ45·단자 배치 기구 적합성(T-09) 검토 필요 | 미해결 |
 | I-040 | 2026-10-30 | pm-orchestrator | 03_design/modules | 모듈 25개 파일은 §1~§6(책임·의존성·입출력·제약·완료 기준·미확인·가정)을 갖췄으나 「이슈 제기」 절이 없다(공통 규칙 3과 형식 차이). 모듈 미확인·가정 항목은 이 점검에서 본문 미열람 | 미해결(낮음, 메인 세션 판단) |
-| I-041 | 2026-10-30 | 메인 세션 | 03_design 전체 (architecture DC-01·02·03, DC-10, BOM) | 기존 1축 구현 발견(사용자 제공, github.com/stardio/servo1axis, 커밋 2135568): ESP32-P4(Waveshare ESP32-P4-ETH), ESP-IDF 5.5.3, MCPWM 펄스 + PCNT 루프백 계수, 온보드 IP101 이더넷 Modbus TCP 서버, Weintek MT8051iP(EasyView) HMI 프로젝트, RS-485 RTU 마스터. 저장소 기록상 1축 100 kHz~1 MHz 출력과 펄스 수 일치를 확인했다(외부 측정은 주기만, 드라이브 입력단 미검증). ③ 설계는 이 자산을 반영하지 않았다. 2축은 미개발. 저장소 문서 간 HMI 연결 포트(IP101 .220 vs W5500 .230)와 STOP GPIO(18 vs 19) 표기가 서로 다르다 | 미해결(사용자 결정 후 architect 재검토) |
+| I-041 | 2026-10-30 | 메인 세션 | 03_design 전체 (architecture DC-01·02·03, DC-10, BOM) | 기존 1축 구현 발견(사용자 제공, github.com/stardio/servo1axis, 커밋 2135568): ESP32-P4(Waveshare ESP32-P4-ETH), ESP-IDF 5.5.3, MCPWM 펄스 + PCNT 루프백 계수, 온보드 IP101 이더넷 Modbus TCP 서버, Weintek MT8051iP(EasyView) HMI 프로젝트, RS-485 RTU 마스터. 저장소 기록상 1축 100 kHz~1 MHz 출력과 펄스 수 일치를 확인했다(외부 측정은 주기만, 드라이브 입력단 미검증). ③ 설계는 이 자산을 반영하지 않았다. 2축은 미개발. 저장소 문서 간 HMI 연결 포트(IP101 .220 vs W5500 .230)와 STOP GPIO(18 vs 19) 표기가 서로 다르다 | 사용자 결정 완료(D-024~D-028), architect 재검토 중 |
+| I-042 | 2026-10-30 | 메인 세션 | 02_requirements/srs.md (D-009 관련 문구) | SRS v0.7의 '두산' 표기를 '대우'로 정정해야 한다(D-026). G2 기준선 이후의 정오표 수준 수정이므로 requirements-analyst가 v0.7.1 정오표로 처리 | 미해결 |
 
 ## ③ 점검 결과 (2026-10-30)
 
