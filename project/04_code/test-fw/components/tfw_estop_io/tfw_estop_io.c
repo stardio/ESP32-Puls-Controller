@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "tfw_logic.h"
+#include "tfw_cfg.h"
 #include "tfw_pulse2.h"
 
 static const char *TAG = "TFW_ESTOP";
@@ -27,6 +28,9 @@ static volatile bool s_pending;
 static volatile uint32_t s_trip_cyc;      /* CPU cycle counter at trip: esp_timer is not used in the ISR (M-01) */
 static uint32_t s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static uint32_t s_pulses_after[2];
+/* N-02: fail-safe. Motion stays refused until tfw_estop_init() has completed successfully (never initialised, any
+ * init step failed, or the watch task could not be created). Reported in es_last_err / es_bind_ok. */
+static volatile bool s_init_ok;
 
 #if CONFIG_TFW_DEBUG_GPIO_ESTOP >= 0
 #define DBG_ESTOP() gpio_set_level(CONFIG_TFW_DEBUG_GPIO_ESTOP, 1), gpio_set_level(CONFIG_TFW_DEBUG_GPIO_ESTOP, 0)
@@ -47,14 +51,16 @@ static void IRAM_ATTR es_isr(void *arg)
     (void)arg;
     DBG_ESTOP();
     const uint32_t c0 = tfw_pulse2_count_isr(0), c1 = tfw_pulse2_count_isr(1);   /* snapshot first (design pseudo-code) */
-    if (s_es.path & 1u) {                      /* path A: software stop */
-        tfw_pulse2_stop(0);
-        tfw_pulse2_stop(1);
-    }
+    /* N-03: latch BEFORE the stop so that a task that is starting an axis at this moment sees the latch when it
+     * re-checks after its timer start (tfw_pulse2 start_common) - whichever order the two run in, the axis ends stopped. */
     if (!s_es.latched) {
         tfw_es_trip(&s_es, c0, c1);                /* always_inline: part of this IRAM function (M-01) */
         s_trip_cyc = esp_cpu_get_cycle_count();
         s_pending = true;
+    }
+    if (s_es.path & 1u) {                      /* path A: software stop */
+        tfw_pulse2_stop(0);
+        tfw_pulse2_stop(1);
     }
 }
 
@@ -95,7 +101,7 @@ void tfw_estop_set_path(uint8_t sel)
     }
 }
 
-esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
+static esp_err_t estop_init_body(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
 {
     s_gpio = gpio; s_active_low = active_low;
     tfw_es_init(&s_es);
@@ -140,7 +146,11 @@ esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
     flags |= ESP_INTR_FLAG_IRAM;
 #endif
     e = gpio_install_isr_service(flags);
-    if (e == ESP_ERR_INVALID_STATE) ESP_LOGW(TAG, "GPIO ISR service already installed: requested level/IRAM flags NOT applied");
+    if (e == ESP_ERR_INVALID_STATE) {
+        /* N-02: the precondition of M-03 (level, IRAM flag) is not met: exported in es_last_err, T-07 becomes NOT_RUN */
+        s_last_err = (uint16_t)ESP_ERR_INVALID_STATE;
+        ESP_LOGW(TAG, "GPIO ISR service already installed: requested level/IRAM flags NOT applied");
+    }
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_last_err = (uint16_t)e; return e; }
     e = gpio_isr_handler_add((gpio_num_t)gpio, es_isr, NULL);
     if (e != ESP_OK) { s_last_err = (uint16_t)e; return e; }
@@ -153,13 +163,26 @@ esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
     tfw_es_boot_check(&s_es, tfw_estop_input_active());
     if (s_es.latched) ESP_LOGW(TAG, "e-stop input ACTIVE at boot: LATCHED, RUN commands are refused until release");
     ESP_LOGI(TAG, "e-stop ISR on core %d, level %d, IRAM flag %d", (int)esp_cpu_get_core_id(), CONFIG_TFW_IRQ_PRIO_ESTOP,
-             CONFIG_PCNT_ISR_IRAM_SAFE ? 1 : 0);
+             TFW_B_PCNT_ISR_IRAM_SAFE);
     ESP_LOGI(TAG, "GPIO%d level at boot = %u (%s, active %s). bind_ok=%u (0 none,1 g0,2 g1,3 both). "
              "Existing servo1axis code used GPIO18: check the wiring.",
              gpio, (unsigned)s_boot_level, tfw_estop_input_active() ? "ACTIVE (already tripped?)" : "inactive",
              active_low ? "LOW" : "HIGH", (unsigned)s_bind_ok);
     tfw_estop_set_path(3);
     if (xTaskCreate(es_task, "tfw_es", 3072, NULL, 9, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    return ESP_OK;
+}
+
+esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
+{
+    s_init_ok = false;
+    esp_err_t e = estop_init_body(gpio, active_low, oper);
+    if (e != ESP_OK) {
+        if (!s_last_err) s_last_err = (uint16_t)e;
+        ESP_LOGE(TAG, "e-stop init FAILED (0x%x): motion is REFUSED permanently (no ISR / no latch)", (unsigned)e);
+        return e;
+    }
+    s_init_ok = true;
     return ESP_OK;
 }
 
@@ -178,7 +201,7 @@ uint16_t tfw_estop_release(void)
 
 bool tfw_estop_latched(void) { return s_es.latched != 0; }
 /* true while latched OR while the input is still active (M-04): the condition to refuse motion */
-bool tfw_estop_blocking(void) { return tfw_es_blocking(&s_es, tfw_estop_input_active()); }
+bool tfw_estop_blocking(void) { return !s_init_ok || tfw_es_blocking(&s_es, tfw_estop_input_active()); }
 
 void tfw_estop_stats(tfw_es_stats_t *out)
 {

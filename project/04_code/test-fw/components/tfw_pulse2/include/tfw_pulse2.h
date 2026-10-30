@@ -25,6 +25,7 @@ typedef struct {
 
 void      tfw_pulse2_probe_caps(tfw_caps_t *out);   /* call BEFORE init: creates and deletes test resources */
 void      tfw_pulse2_set_cpu_mhz(uint32_t mhz);     /* measured CPU clock for the update timing statistics, before init */
+void      tfw_pulse2_set_block_fn(bool (*fn)(void)); /* N-03: start refused / re-checked while fn() is true (e-stop latched) */
 void      tfw_pulse2_set_update_core(int core);     /* TASK mode pinning; -1 = unpinned */
 esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, tfw_upd_mode_t mode);
 bool      tfw_pulse2_axis_ok(uint8_t axis);

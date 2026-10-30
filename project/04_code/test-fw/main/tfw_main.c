@@ -1,6 +1,7 @@
 /* TFW-01 tfw_main. Based on servo1axis main/app_main.c [E4] (init_nvs, boot log style). The ladder runtime is NOT
  * included. NOT verified on hardware (no ESP-IDF / board in the authoring container). */
 #include "tfw_main.h"
+#include "tfw_cfg.h"
 #include <string.h>
 #include "sdkconfig.h"
 #include "esp_chip_info.h"
@@ -18,11 +19,7 @@
 
 static const char *TAG = "TFW_MAIN";
 
-#if CONFIG_PCNT_ISR_IRAM_SAFE
-#define BUILD_IRAM 1
-#else
-#define BUILD_IRAM 0
-#endif
+#define BUILD_IRAM TFW_B_PCNT_ISR_IRAM_SAFE
 
 static tfw_regwin_t g_win;
 static volatile tfw_results_t g_res;
@@ -107,9 +104,9 @@ static void clear_stats(void)
 
 /* ------------------------------------------------------------------ sequencer glue */
 static int hw_move(void *c, uint8_t ax, uint32_t sp, uint32_t cnt, uint32_t a, uint32_t d)
-{ (void)c; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_move(ax, sp, cnt, a, d) == ESP_OK ? 0 : -1; }
+{ (void)c; if (tfw_estop_blocking()) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_move(ax, sp, cnt, a, d) == ESP_OK ? 0 : -1; }
 static int hw_fixed(void *c, uint8_t ax, uint32_t f, uint32_t cnt)
-{ (void)c; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_run_fixed(ax, f, cnt) == ESP_OK ? 0 : -1; }
+{ (void)c; if (tfw_estop_blocking()) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_run_fixed(ax, f, cnt) == ESP_OK ? 0 : -1; }
 static bool hw_busy(void *c, uint8_t ax) { (void)c; return tfw_pulse2_busy(ax); }
 static uint32_t hw_count(void *c, uint8_t ax) { (void)c; return tfw_pulse2_count(ax); }
 static void hw_stop(void *c, uint8_t ax) { (void)c; tfw_pulse2_stop(ax); }
@@ -255,7 +252,7 @@ void app_main(void)
     ESP_LOGI(TAG, "==== TFW P4 pre-test firmware (D-025) ====");
     ESP_LOGI(TAG, "chip model=%d cores=%d revision=%u cpu=%lu MHz", (int)ci.model, (int)ci.cores, (unsigned)ci.revision, (unsigned long)s_cpu_mhz);
     ESP_LOGI(TAG, "config: res=%lu Hz upd=%u us mode=%s flags=0x%x layout=%c axes=%d", (unsigned long)g_win.cfg_res_hz,
-             (unsigned)g_win.cfg_upd_us, CONFIG_TFW_UPD_MODE_HWTIMER ? "HWTIMER" : "TASK_10MS", (unsigned)g_win.cfg_flags,
+             (unsigned)g_win.cfg_upd_us, TFW_B_UPD_MODE_HWTIMER ? "HWTIMER" : "TASK_10MS", (unsigned)g_win.cfg_flags,
              core_b ? 'B' : 'A', CONFIG_TFW_AXIS_COUNT);
     ESP_LOGI(TAG, "IRAM options: PCNT_ISR_IRAM_SAFE=%d PCNT_CTRL_FUNC_IN_IRAM=%d MCPWM_ISR_IRAM_SAFE=%d MCPWM_CTRL_FUNC_IN_IRAM=%d GPTIMER_ISR_IRAM_SAFE=%d",
 #if CONFIG_PCNT_ISR_IRAM_SAFE
@@ -287,9 +284,9 @@ void app_main(void)
     ESP_LOGI(TAG, "pins: AX1 PLS=%d DIR=%d EN=%d | AX2 PLS=%d DIR=%d EN=%d | ESTOP=%d active %s | dbg=%d/%d | probe=%d",
              CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
              CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO, CONFIG_TFW_ESTOP_GPIO,
-             CONFIG_TFW_ESTOP_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO);
+             TFW_B_ESTOP_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO);
     ESP_LOGI(TAG, "legacy NVS-on-write=%d (servo1axis behaviour; default off); max_clients=%d (reg 0x705E); irq levels estop=%d pcnt=%d gpt=%d",
-             CONFIG_TFW_LEGACY_NVS_ON_WRITE, CONFIG_TFW_MAX_CLIENTS, CONFIG_TFW_IRQ_PRIO_ESTOP, CONFIG_TFW_IRQ_PRIO_PCNT, CONFIG_TFW_IRQ_PRIO_GPT);
+             TFW_B_LEGACY_NVS_ON_WRITE, CONFIG_TFW_MAX_CLIENTS, CONFIG_TFW_IRQ_PRIO_ESTOP, CONFIG_TFW_IRQ_PRIO_PCNT, CONFIG_TFW_IRQ_PRIO_GPT);
 
     tfw_caps_t caps;
     tfw_pulse2_probe_caps(&caps);
@@ -303,8 +300,9 @@ void app_main(void)
         ESP_LOGE(TAG, "AXIS 2 UNAVAILABLE (err 0x%x): RUN commands with axis 2 return tst_status 0x12", (unsigned)tfw_pulse2_axis_err(1));
 
     mcpwm_oper_handle_t opers[2] = {tfw_pulse2_operator(0), tfw_pulse2_operator(1)};
-    esp_err_t ee = tfw_estop_init(CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_ESTOP_ACTIVE_LOW, opers);
-    if (ee != ESP_OK) ESP_LOGE(TAG, "tfw_estop_init failed 0x%x", (unsigned)ee);
+    esp_err_t ee = tfw_estop_init(CONFIG_TFW_ESTOP_GPIO, TFW_B_ESTOP_ACTIVE_LOW, opers);
+    if (ee != ESP_OK) ESP_LOGE(TAG, "tfw_estop_init failed 0x%x: ALL motion commands are refused (0x10) - N-02", (unsigned)ee);
+    tfw_pulse2_set_block_fn(tfw_estop_blocking);
     if (!(g_win.cfg_flags & TFW_CFG_BRAKE_USE)) { tfw_estop_set_path(1); g_win.es_path_sel = 1; }
     else g_win.es_path_sel = 3;
 

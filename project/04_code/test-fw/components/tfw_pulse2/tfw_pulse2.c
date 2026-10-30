@@ -60,6 +60,7 @@ typedef struct {
 
 static axis_t s_ax[MAX_AXES];
 static uint8_t s_axis_count;
+static bool (*s_block_fn)(void);          /* N-03: e-stop block check (set by main; keeps the component free of a tfw_estop_io dependency) */
 static uint32_t s_res_hz, s_upd_us, s_ref_us, s_ns_per_tick, s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static tfw_upd_mode_t s_mode;
 static tfw_upd_stats_t s_upd;
@@ -318,6 +319,9 @@ static esp_err_t start_common(axis_t *a, uint32_t first_freq, uint32_t target, b
 {
     if (!a->ok) return ESP_ERR_INVALID_STATE;
     if (a->active) return ESP_ERR_INVALID_STATE;
+    /* N-03: no start (and so no pcnt_unit_clear_count, which would hide the pulses counted after a trip) while the
+     * e-stop is latched / active / not initialised */
+    if (s_block_fn && s_block_fn()) return ESP_ERR_INVALID_STATE;
     uint32_t ticks;
     if (!tfw_ticks_for_freq(s_res_hz, first_freq, s_max_ticks, &ticks)) return ESP_ERR_INVALID_ARG;
 
@@ -346,7 +350,15 @@ static esp_err_t start_common(axis_t *a, uint32_t first_freq, uint32_t target, b
     e = mcpwm_generator_set_force_level(a->gen, -1, true);
     if (e != ESP_OK) goto fail;
     e = mcpwm_timer_start_stop(a->timer, MCPWM_TIMER_START_NO_STOP);
-    if (e == ESP_OK) return ESP_OK;
+    if (e == ESP_OK) {
+        /* N-03: the e-stop ISR may have run between "active = true" and the timer start (it stopped nothing then, or
+         * its force-low was released above). The ISR latches BEFORE it stops, so the latch is visible here: stop again. */
+        if (s_block_fn && s_block_fn()) {
+            tfw_pulse2_stop((uint8_t)(a - s_ax));
+            return ESP_ERR_INVALID_STATE;
+        }
+        return ESP_OK;
+    }
 fail:
     a->active = false;
     mcpwm_generator_set_force_level(a->gen, 0, true);
@@ -372,6 +384,8 @@ esp_err_t tfw_pulse2_run_fixed(uint8_t axis, uint32_t freq_hz, uint32_t count)
     if (axis >= MAX_AXES || freq_hz < 100 || freq_hz > 1000000u) return ESP_ERR_INVALID_ARG;
     return start_common(&s_ax[axis], freq_hz, count ? count : UINT32_MAX, true);
 }
+
+void tfw_pulse2_set_block_fn(bool (*fn)(void)) { s_block_fn = fn; }
 
 void IRAM_ATTR tfw_pulse2_stop(uint8_t axis)
 {

@@ -20,9 +20,13 @@ uint32_t tfw_seq_run(const tfw_seq_hw_t *hw, tfw_regwin_t *w, volatile tfw_resul
     for (uint32_t it = 0; it < iterations; ++it) {
         uint32_t target[2] = {0, 0}, tmo = 0;
         bool started[2] = {false, false};
+        bool abort = false, timed_out = false;
+        /* N-03: a trip between iterations (or while starting) must not start another move */
+        if (hw->aborted(hw->ctx)) { w->status = TFW_ST_IDLE; return done; }
         /* start both axes back-to-back */
         for (uint8_t ax = 0; ax < 2; ++ax) {
             if (!(mask & (1u << ax))) continue;
+            if (hw->aborted(hw->ctx)) { abort = true; break; }        /* N-03: re-check right before each axis start */
             uint32_t speed = freq, count = base_count, acc = acc0, dec = dec0;
             if (randomise) {
                 count = tfw_rand_distance(&rng);
@@ -36,14 +40,16 @@ uint32_t tfw_seq_run(const tfw_seq_hw_t *hw, tfw_regwin_t *w, volatile tfw_resul
                 uint32_t t = timeout_ms(speed, count, acc, dec);
                 if (t > tmo) tmo = t;
             } else {
+                /* N-03: a start refused because of a trip is an abort, not a pulse error */
+                if (hw->aborted(hw->ctx)) { abort = true; break; }
                 res->err[ax] = res->err[ax] + 1u;   /* start failure counts as an error */
             }
             res->last_target[ax] = count;
         }
         /* wait for all */
         const uint32_t t0 = hw->now_ms(hw->ctx);
-        bool abort = false, timed_out = false;
         for (;;) {
+            if (abort) break;
             bool any = false;
             for (uint8_t ax = 0; ax < 2; ++ax) if (started[ax] && hw->busy(hw->ctx, ax)) any = true;
             if (!any) break;
