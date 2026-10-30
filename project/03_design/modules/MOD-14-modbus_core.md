@@ -2,10 +2,12 @@
 
 | 모듈 ID | 버전 | 작성 | 대상 언어/플랫폼 | 추적 SRS ID |
 |---|---|---|---|---|
-| MOD-14 | 0.1 | architect | C(MCU 무관, 전송 계층 무관) | FR-004, FR-005, FR-016, FR-021, FR-022, FR-023, NFR-010, NFR-022, STD-003 |
+| MOD-14 | 0.2 | architect | C(MCU 무관, 전송 계층 무관) | FR-004, FR-005, FR-016, FR-021, FR-022, FR-023, NFR-010, NFR-022, STD-003 |
+
+> v0.2 개정: servo1axis `process_request`(FC01/02/03/05/06/15/16, 예외 응답, 후보 배열 검증 후 일괄 반영)[E2]를 **수정 후 재사용**한다. 고정 배열(HR 32·코일 8) 대신 MOD-20 생성 표를 쓰고, 레거시 창(interface-spec §5.0.1)을 표의 한 영역으로 포함한다. 워드 순서는 **하위 워드 먼저**(DC-15), FC02 추가.
 
 ## 1. 책임 (이 모듈이 하는 일 / 하지 않는 일)
-- 한다: Modbus PDU(기능 코드 + 데이터) 해석·응답 생성. 지원 기능 코드 01·03·04·05·06·15·16, 예외 01~04(interface-spec §5.1). 생성된 레지스터 표(MOD-20)로 주소 → 항목 매핑, 읽기 시 스냅샷 일관성(32비트 상위 워드 먼저), 쓰기 시 형·범위·속성 검사, 32비트 반쪽 쓰기 거부, 1축 모델 축2 영역 예외 02. 명령 레지스터 쓰기는 MOD-09/10/12/17 명령으로 변환. 요청 출처(conn_id)를 명령에 붙여 JOG 소유·통신두절 판정에 쓰게 한다.
+- 한다: Modbus PDU 해석·응답 생성. 지원 기능 코드 01·**02**·03·04·05·06·15·16, 예외 01~04(interface-spec §5.1). 레거시 창(HR 0x0000~0x001F, 코일 0~7, DI 0~7)의 기존 동작 재현(쓰기 가능 주소: HR 0~3·20~23, 시작 속도 쓰기 거부, 방향 코일 저장). 생성된 레지스터 표(MOD-20)로 주소 → 항목 매핑, 읽기 시 스냅샷 일관성(32비트 하위 워드 먼저), 쓰기 시 형·범위·속성 검사, 32비트 반쪽 쓰기 거부, 1축 모델 축2 영역 예외 02. 명령 레지스터 쓰기는 MOD-09/10/12/17 명령으로 변환. 요청 출처(conn_id)를 명령에 붙여 JOG 소유·통신두절 판정에 쓰게 한다.
 - 하지 않는다: MBAP·RTU 프레이밍(MOD-15·16), 소켓·UART(MOD-04·05).
 
 ## 2. 의존성
@@ -35,7 +37,9 @@ typedef struct { uint16_t addr; uint8_t words; uint8_t type; uint8_t access; uin
 처리(의사코드):
 ```
 FC03/04 (start, qty): check qty 1..125 ; for each addr: entry = lookup(addr) else exc 02
-    take snapshot once per request (ax_get_snapshot for touched axes) -> encode big-endian words
+    take snapshot once per request (ax_get_snapshot for touched axes) -> encode each word big-endian, 32-bit values low word first (DC-15)
+FC02 (start, qty): legacy discrete inputs 0..7 only (running, link, client, complete, fault) else exc 02
+legacy window: writable HR 0..3, 20..23 only; single-word write allowed, validate full 32-bit set like existing validate_control_registers()
 FC06/16: for each addr: entry RW? else exc 02 ; 32-bit entries must be written fully in same request else exc 03
     validate all values first (atomic request: all-or-nothing) -> then apply via set() -> exc 03/04 on failure
 FC01/05/15: coil map (JOG+/-, STOP, SERVO_ON) -> translated to axis commands
@@ -52,12 +56,14 @@ command registers (sys_command, axis_command): write enqueues command with ctx.c
 | # | 기준 | 검증 방법 |
 |---|---|---|
 | 1 | regmap 전 항목 읽기/쓰기(속성대로) 성공, 미정의 주소 예외 02 | 호스트 단위 테스트(생성 표 기반 자동 케이스) |
-| 2 | 32비트 값 상위 워드 먼저, 반쪽 쓰기 예외 03 | 호스트 단위 테스트 |
+| 2 | 32비트 값 하위 워드 먼저, 반쪽 쓰기 예외 03(신규 영역). 레거시 창은 기존 동작대로 단일 워드 쓰기(FC06) 허용 후 32비트 범위 검증[E2] | 호스트 단위 테스트 |
+| 2a | 레거시 창 응답이 servo1axis `process_request`와 같음(같은 요청 열에 대한 응답 바이트 비교, 기존 코드는 호스트 빌드용으로 복사해 기준 출력 생성) | 호스트 비교 시험 |
 | 3 | 범위 밖 값 예외 03, 요청 전체 미반영 | 호스트 단위 테스트 |
 | 4 | 1축 모델에서 축2 영역 예외 02 | 호스트 단위 테스트 |
 | 5 | FC 01/03/04/05/06/15/16 형식 적합, 미지원 FC 예외 01 | 호스트 단위 테스트 + 제3자 Modbus 시험 도구(STD-003) |
 | 6 | 축 명령 레지스터 → 동작 → cmd_result 코드 | HIL(FR-004, FR-023(b)) |
 
 ## 6. 미확인·가정
-- 지원 FC 목록, 읽기 전용 주소 쓰기 예외 02, 워드 순서 [가정](DC-15). 이지뷰·M2I 지원 FC 미확인(PS-17).
+- 지원 FC 목록, 읽기 전용 주소 쓰기 예외 02 [가정](DC-15). 워드 순서 하위 먼저는 Weintek 실적[E6] 기반, M2I 설정 가능 여부 미확인(PS-29).
+- 레거시 창의 반쪽 쓰기 허용은 기존 HMI 호환을 위한 예외 규칙이다(신규 영역과 규칙이 다름 — 문서에 명시).
 - Modbus 규격 원문(PDU 최대 길이, 개수 상한) 대조 전.
