@@ -62,6 +62,7 @@
 | I-038 | 2026-10-30 | architect | 02_requirements FR-023(c)·FR-012 (interface-spec #5·6, HO3 #3·6, DC-16) | "운전에 필요한 파라미터" 목록(interface-spec §5.6) 제안, JOG 유지 상실 시 감속 정지는 FR-012와 별개 [가정]. G3 확인 필요. SRS 미수정 | 미해결(G3 확인) |
 | I-039 | 2026-10-30 | parts-selector | 03_design (parts #5, bom #4) | STM32F407G-DISC1에 이더넷 없을 가능성: T-01~T-04 장비 구성 재확인. 하우징 폭 22.5 mm와 2축 PCB·RJ45·단자 배치 기구 적합성(T-09) 검토 필요 | 미해결 |
 | I-040 | 2026-10-30 | pm-orchestrator | 03_design/modules | 모듈 25개 파일은 §1~§6(책임·의존성·입출력·제약·완료 기준·미확인·가정)을 갖췄으나 「이슈 제기」 절이 없다(공통 규칙 3과 형식 차이). 모듈 미확인·가정 항목은 이 점검에서 본문 미열람 | 미해결(낮음, 메인 세션 판단) |
+| I-041 | 2026-10-30 | 메인 세션 | 03_design 전체 (architecture DC-01·02·03, DC-10, BOM) | 기존 1축 구현 발견(사용자 제공, github.com/stardio/servo1axis, 커밋 2135568): ESP32-P4(Waveshare ESP32-P4-ETH), ESP-IDF 5.5.3, MCPWM 펄스 + PCNT 루프백 계수, 온보드 IP101 이더넷 Modbus TCP 서버, Weintek MT8051iP(EasyView) HMI 프로젝트, RS-485 RTU 마스터. 저장소 기록상 1축 100 kHz~1 MHz 출력과 펄스 수 일치를 확인했다(외부 측정은 주기만, 드라이브 입력단 미검증). ③ 설계는 이 자산을 반영하지 않았다. 2축은 미개발. 저장소 문서 간 HMI 연결 포트(IP101 .220 vs W5500 .230)와 STOP GPIO(18 vs 19) 표기가 서로 다르다 | 미해결(사용자 결정 후 architect 재검토) |
 
 ## ③ 점검 결과 (2026-10-30)
 
