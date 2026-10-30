@@ -8,7 +8,7 @@
 |---|---|---|---|
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
 | ② 요구사항 | 완료 | srs.md v0.7, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
-| ③ 설계 | 대기 | – | G2 승인됨, 착수 가능 |
+| ③ 설계 | 진행중 | – | G2 승인(D-023) |
 | ④ 구현 | 대기 | – | G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
