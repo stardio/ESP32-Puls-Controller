@@ -7,7 +7,7 @@
 | 단계 | 상태 | 주요 산출물 | 비고 |
 |---|---|---|---|
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
-| ② 요구사항 | 검토대기 | srs.md v0.4, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-014 반영. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
+| ② 요구사항 | 검토대기 | srs.md v0.5, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-019 반영. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
 | ③ 설계 | 대기 | – | G2 승인 필요 |
 | ④ 구현 | 대기 | – | G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
@@ -56,7 +56,8 @@
 - 원가는 조건부다(D-011, I-018)
 - SRS §8.1의 [가정] 값과 I-020 채택 여부, I-021 summary 정정 여부
 - 남은 확인 질문 8건은 G2 필수가 0건이다(Q1-잔여 > Q11-잔여 > Q14·Q15-잔여 > Q10-잔여·Q18·Q22 > Q20)
-- 축 수가 2축으로 확정되어(D-014) SRS v0.4에 반영했다(FR-003, NFR-002 등)
+- 라인업 1축·2축 모델(D-015), 원가 잠정 약 9만원·패널 별도(D-016, D-018), HMI 터치패널과 Modbus TCP·유선 이더넷(D-017, D-019)을 SRS v0.5에 반영했다
+- G2 필수 질문으로 Q24(HMI 화면 범위, 화면 데이터 제공 여부)가 남아 있다
 
 ## 다음 할 일
 
