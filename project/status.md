@@ -9,7 +9,7 @@
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
 | ② 요구사항 | 완료 | srs.md v0.7, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
 | ③ 설계 | 검토대기 | architecture.md v0.2, interface-spec.md, parts-comparison.md, bom-draft.md, modules/MOD-01~25, handoff.md (project/03_design) | 산출물 완비. G3 승인 요청은 보류(「G3 판정」 참조): G3 전 실측 T-01~T-09 미실시 |
-| ④ 구현 | 대기 | – | G3 승인 필요 |
+| ④ 구현 | 대기(시험 펌웨어만 진행) | 04_code/test-fw (TFW-01~05), reviews/test-fw-review-1~3.md | D-025 예외: 시험 펌웨어 리뷰 3회차 '조건부 통과'. 제품 모듈은 G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
 | ⑦ 마케팅 | 대기 | – | G6 승인 필요 |
