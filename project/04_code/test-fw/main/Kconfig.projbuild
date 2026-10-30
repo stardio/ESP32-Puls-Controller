@@ -1,0 +1,73 @@
+menu "TFW test firmware (D-025, G3 pre-test only)"
+
+    config TFW_AX1_PLS_GPIO
+        int "Axis 1 pulse GPIO (also PCNT loop-back input)"
+        default 25
+    config TFW_AX1_DIR_GPIO
+        int "Axis 1 direction GPIO"
+        default 32
+    config TFW_AX1_EN_GPIO
+        int "Axis 1 enable GPIO"
+        default 33
+    config TFW_AX2_PLS_GPIO
+        int "Axis 2 pulse GPIO (UNCONFIRMED: set to your wiring, PS-27 pending)"
+        default 2
+    config TFW_AX2_DIR_GPIO
+        int "Axis 2 direction GPIO (UNCONFIRMED)"
+        default 3
+    config TFW_AX2_EN_GPIO
+        int "Axis 2 enable GPIO (UNCONFIRMED)"
+        default 4
+    config TFW_AXIS_COUNT
+        int "Number of axes to bring up (1 or 2)"
+        range 1 2
+        default 2
+    config TFW_ESTOP_GPIO
+        int "Emergency-stop input GPIO (D-027: GPIO19)"
+        default 19
+    config TFW_ESTOP_ACTIVE_LOW
+        bool "E-stop input active LOW (existing wiring, pull-up). Off = NC contact, active HIGH (DC-17)"
+        default y
+    config TFW_DEBUG_GPIO
+        int "Debug GPIO toggled in the watch-point ISR (-1 = off)"
+        default -1
+    config TFW_DEBUG_GPIO_ESTOP
+        int "Debug GPIO toggled in the e-stop ISR (-1 = off)"
+        default -1
+    config TFW_PROBE_GPIO
+        int "GPIO used only by the boot-time resource probe (deleted again)"
+        default 2
+    config TFW_UPD_MODE_HWTIMER
+        bool "Speed update from GPTimer ISR (off = 10 ms task, reproduces servo1axis)"
+        default y
+    config TFW_LEGACY_NVS_ON_WRITE
+        bool "Save legacy HR values to NVS on every Modbus write (reproduces servo1axis risk 3; T-06 comparison only)"
+        default n
+    config TFW_IP_A
+        int "IP A"
+        default 192
+    config TFW_IP_B
+        int "IP B"
+        default 168
+    config TFW_IP_C
+        int "IP C"
+        default 0
+    config TFW_IP_D
+        int "IP D"
+        default 220
+    config TFW_PORT
+        int "Modbus TCP port"
+        default 502
+    config TFW_UNIT_ID
+        int "Modbus unit id"
+        default 1
+    config TFW_MAX_CLIENTS
+        int "Max simultaneous Modbus TCP clients [assumed 4]"
+        default 4
+        help
+          T-05 uses 4 load clients + the control connection (+ the HMI): build with 8 for T-05,
+          keep 4 for the "5th connection is refused" check.
+    config TFW_ETM_EXPERIMENT
+        bool "Compile the PCNT->MCPWM ETM experiment (not implemented, reports 'not tested')"
+        default n
+endmenu

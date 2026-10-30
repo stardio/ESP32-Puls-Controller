@@ -1,0 +1,10 @@
+# Risk 2 countermeasure: ISR handlers and the control functions they call stay in IRAM / are safe while flash is busy.
+# Option names follow ESP-IDF v5.5 Kconfig of the drivers; verify with: grep -E "IRAM" sdkconfig  (see notes).
+CONFIG_PCNT_ISR_IRAM_SAFE=y
+CONFIG_PCNT_CTRL_FUNC_IN_IRAM=y
+CONFIG_MCPWM_ISR_IRAM_SAFE=y
+CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y
+CONFIG_MCPWM_ISR_HANDLER_IN_IRAM=y
+CONFIG_GPTIMER_ISR_IRAM_SAFE=y
+CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM=y
+CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y

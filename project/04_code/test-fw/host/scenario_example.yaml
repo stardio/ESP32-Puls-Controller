@@ -1,0 +1,6 @@
+# Example scenario (T-03..T-09). la_csv paths are relative to this file. Fill in after capturing with the analyser.
+steps:
+  - {id: T-03, name: "2-axis fixed 200 kHz 10 s", cmd: RUN_FIXED, axis_mask: 3, freq_hz: 200000, count: 2000000, la_csv: la_t03_200k.csv, la_pulse_channels: [ax1, ax2], timeout_s: 60}
+  - {id: T-04, name: "random 1000 moves", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 12345, timeout_s: 7200}
+  - {id: T-05, name: "4 TCP clients during sequence", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 777, tcp_load: {clients: 4, fc: MIX, qty: 125, interval_ms: 0}, timeout_s: 7200}
+  - {id: T-06, name: "NVS write 100 ms", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 99, nvs_period_ms: 100, iram_safe: true, timeout_s: 7200}

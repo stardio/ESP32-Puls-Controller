@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+test_logic
+results/
+build*/
+sdkconfig
+sdkconfig.old
