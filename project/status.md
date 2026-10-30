@@ -6,8 +6,8 @@
 
 | 단계 | 상태 | 주요 산출물 | 비고 |
 |---|---|---|---|
-| ① 기획·조사 | 검토대기 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행(실제 서브에이전트). 필수 산출물·handoff 항목 완비, 근거 품질은 초안 수준(원문 미열람). 사용자 검토 후 ② 진행 |
-| ② 요구사항 | 대기 | – | ① 완결성 충족, 선행 게이트 없음(진행 가능) |
+| ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
+| ② 요구사항 | 진행중 | – | |
 | ③ 설계 | 대기 | – | G2 승인 필요 |
 | ④ 구현 | 대기 | – | G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
@@ -43,7 +43,7 @@ I-001~I-009는 1차 시험본 기준. 2차 산출물로 대체된 것은 '대체
 | I-011 | 2026-10-30 | competitor-analyst | 01_market/competitor-analysis.md | Delta DVP-10PM 축 수·주파수 상충(1 MHz vs 500 kHz), LS XGF-PO3H 출력 주파수 미확인, FastAccelStepper 문서 간 차이(200k vs 50k steps/s). 공식 매뉴얼 확인 전 비교 보류 | 미해결 |
 | I-012 | 2026-10-30 | 메인 세션 | 환경 | 차단 도메인: global.yamaha-motor.com, www.motir.go.kr, mitsubishielectric.com, deltaww.com, suryasarana.com (I-005와 연동. 허용 시 미확인 셀 다수 감소) | 미해결 |
 | I-013 | 2026-10-30 | market-researcher | 01_market/market-research.md | 시장 규모 출처 간 차이(세계·아태 92억~186억 달러 등) 미해소. 원가·가격 근거로 사용 불가 | 미해결 |
-| I-014 | 2026-10-30 | market-researcher / 메인 세션 | 01_market/handoff.md §3 | 사용자 결정 필요(결정 후보, 확정 아님): (1) 목표 고객 후보 1~3 선택 또는 인터뷰 후 결정, (2) 통신: 개방형(Modbus) 기본 검토, EtherCAT은 G3 판단, (3) 최대 펄스 주파수 목표 200 kpps 이상 여부, (4) G2 전 고객 인터뷰 5~10건 실시 여부 | 사용자 결정 대기 |
+| I-014 | 2026-10-30 | market-researcher / 메인 세션 | 01_market/handoff.md §3 | 사용자 결정 필요(결정 후보, 확정 아님): (1) 목표 고객 후보 1~3 선택 또는 인터뷰 후 결정, (2) 통신: 개방형(Modbus) 기본 검토, EtherCAT은 G3 판단, (3) 최대 펄스 주파수 목표 200 kpps 이상 여부, (4) G2 전 고객 인터뷰 5~10건 실시 여부 | 해소(D-005~D-008) |
 | I-015 | 2026-10-30 | pm-orchestrator | 01_market/competitor-analysis.md | 비교표 42셀 중 24셀 미확인. 가격 우위·차별화 가설 4개는 [가정]이며 검증 불가 | 미해결 |
 | I-016 | 2026-10-30 | pm-orchestrator | 01_market/handoff.md §4 | summary.md의 미확인 핵심 항목(국내 통신 점유율, IATF 16949 등 품질 요구 미조사)이 handoff 미확인 목록에 없음. MR 미확인 12건 vs handoff 목록 7건(미확인 5, [가정] 2)으로 집계 불일치. handoff 보강 필요 | 해소(메인 세션이 handoff §4 보강) |
 
