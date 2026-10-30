@@ -7,8 +7,8 @@
 | 단계 | 상태 | 주요 산출물 | 비고 |
 |---|---|---|---|
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
-| ② 요구사항 | 검토대기 | srs.md v0.7, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
-| ③ 설계 | 대기 | – | G2 승인 필요 |
+| ② 요구사항 | 완료 | srs.md v0.7, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
+| ③ 설계 | 대기 | – | G2 승인됨, 착수 가능 |
 | ④ 구현 | 대기 | – | G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
@@ -20,7 +20,7 @@
 
 | 게이트 | 상태 | 기록 파일 |
 |---|---|---|
-| G2 요구사항 확정 | 미실시 | – |
+| G2 요구사항 확정 | 승인 (2026-10-30) | gates/G2-requirements.md |
 | G3 아키텍처·핵심 부품 | 미실시 | – |
 | G6 양산/출시·가격 | 미실시 | – |
 
@@ -64,5 +64,5 @@
 
 ## 다음 할 일
 
-- 사용자: `/gate`로 G2 승인 결정 (승인 전 ③ 시작 금지)
-- G2 승인 시 메인 세션이 gates/G2-requirements.md와 decisions.md에 기록
+- G2 승인 완료(D-023). 다음 명령: `/phase-3-design`
+- ③ 착수 전 권장: 제조사 도메인(mitsubishielectric.com, deltaww.com 등)과 두산·이지뷰·M2I 사이트 허용(데이터시트 확인용)
