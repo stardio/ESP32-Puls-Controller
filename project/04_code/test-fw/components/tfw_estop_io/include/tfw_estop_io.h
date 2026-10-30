@@ -20,4 +20,6 @@ void      tfw_estop_set_path(uint8_t sel);      /* 1 A, 2 B, 3 A+B */
 uint16_t  tfw_estop_release(void);              /* 0 ok, 0x10 refused */
 bool      tfw_estop_latched(void);
 bool      tfw_estop_input_active(void);
+bool      tfw_estop_blocking(void);             /* latched || input active (M-04) */
+void      tfw_estop_set_cpu_mhz(uint32_t mhz);  /* measured clock, call before init (m-02) */
 void      tfw_estop_stats(tfw_es_stats_t *out);

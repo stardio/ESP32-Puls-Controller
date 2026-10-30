@@ -10,14 +10,14 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
         int "Axis 1 enable GPIO"
         default 33
     config TFW_AX2_PLS_GPIO
-        int "Axis 2 pulse GPIO (UNCONFIRMED: set to your wiring, PS-27 pending)"
-        default 2
+        int "Axis 2 pulse GPIO (-1 = axis 2 not created; MUST be set to your wiring, PS-27 pending)"
+        default -1
     config TFW_AX2_DIR_GPIO
-        int "Axis 2 direction GPIO (UNCONFIRMED)"
-        default 3
+        int "Axis 2 direction GPIO (-1 = axis 2 not created)"
+        default -1
     config TFW_AX2_EN_GPIO
-        int "Axis 2 enable GPIO (UNCONFIRMED)"
-        default 4
+        int "Axis 2 enable GPIO (-1 = axis 2 not created)"
+        default -1
     config TFW_AXIS_COUNT
         int "Number of axes to bring up (1 or 2)"
         range 1 2
@@ -35,8 +35,20 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
         int "Debug GPIO toggled in the e-stop ISR (-1 = off)"
         default -1
     config TFW_PROBE_GPIO
-        int "GPIO used only by the boot-time resource probe (deleted again)"
+        int "GPIO used only by the boot-time resource probe (-1 = probe skipped; must not be used by anything else)"
+        default -1
+    config TFW_IRQ_PRIO_ESTOP
+        int "Interrupt level of the e-stop GPIO ISR (0 = default; highest of the three, M-03)"
+        range 0 3
+        default 3
+    config TFW_IRQ_PRIO_PCNT
+        int "Interrupt level of the PCNT watch-point ISR (0 = driver default)"
+        range 0 3
         default 2
+    config TFW_IRQ_PRIO_GPT
+        int "Interrupt level of the GPTimer update ISR (0 = driver default)"
+        range 0 3
+        default 1
     config TFW_UPD_MODE_HWTIMER
         bool "Speed update from GPTimer ISR (off = 10 ms task, reproduces servo1axis)"
         default y

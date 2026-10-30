@@ -60,7 +60,7 @@ typedef struct {
 
 static axis_t s_ax[MAX_AXES];
 static uint8_t s_axis_count;
-static uint32_t s_res_hz, s_upd_us, s_ns_per_tick, s_cpu_mhz;
+static uint32_t s_res_hz, s_upd_us, s_ref_us, s_ns_per_tick, s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static tfw_upd_mode_t s_mode;
 static tfw_upd_stats_t s_upd;
 static gptimer_handle_t s_gpt;
@@ -117,7 +117,7 @@ static bool IRAM_ATTR on_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_d
         int now = 0;
         pcnt_unit_get_count(unit, &now);
         uint32_t past = ((uint32_t)now > base) ? (uint32_t)now - base : 0;
-        uint32_t lat = past * a->cur_ticks * s_ns_per_tick;
+        uint32_t lat = tfw_sat_mul(tfw_sat_mul(past, a->cur_ticks), s_ns_per_tick);   /* m-01: saturating, no 32-bit wrap */
         if (lat > a->isr_lat_ns_max) a->isr_lat_ns_max = lat;
         a->done = true;
     }
@@ -135,7 +135,7 @@ static void IRAM_ATTR update_all(void)
         }
     }
     uint32_t c1 = esp_cpu_get_cycle_count();
-    tfw_upd_record(&s_upd, c0, c1, s_cpu_mhz, s_upd_us);
+    tfw_upd_record(&s_upd, c0, c1, s_cpu_mhz, s_ref_us);   /* M-06: 10 ms reference in task mode */
 }
 
 static bool IRAM_ATTR on_gpt_alarm(gptimer_handle_t t, const gptimer_alarm_event_data_t *e, void *u)
@@ -206,7 +206,8 @@ static esp_err_t create_axis(uint8_t idx, int pls, int dir, int en)
     STEP(mcpwm_timer_enable(a->timer), "timer enable");
     mcpwm_generator_set_force_level(a->gen, 0, true);
 
-    pcnt_unit_config_t uc = {.low_limit = -1, .high_limit = (int)TFW_PCNT_HIGH_LIMIT, .flags.accum_count = false};
+    pcnt_unit_config_t uc = {.low_limit = -1, .high_limit = (int)TFW_PCNT_HIGH_LIMIT, .flags.accum_count = false,
+                             .intr_priority = CONFIG_TFW_IRQ_PRIO_PCNT};          /* M-03 (0 = driver default) */
     STEP(pcnt_new_unit(&uc, &a->pcnt), "pcnt unit");
     pcnt_chan_config_t pc = {.edge_gpio_num = pls, .level_gpio_num = -1};
     STEP(pcnt_new_channel(a->pcnt, &pc, &a->chan), "pcnt channel");
@@ -226,8 +227,8 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
     ESP_RETURN_ON_FALSE(tfw_res_valid(res_hz), ESP_ERR_INVALID_ARG, TAG, "resolution %lu not in {2,10,20,40} MHz", (unsigned long)res_hz);
     ESP_RETURN_ON_FALSE(upd_us >= 500 && upd_us <= 10000, ESP_ERR_INVALID_ARG, TAG, "update period");
     s_res_hz = res_hz; s_upd_us = upd_us; s_mode = mode;
+    s_ref_us = tfw_upd_ref_us(mode == TFW_UPD_TASK_10MS, upd_us);
     s_ns_per_tick = 1000000000u / res_hz;
-    s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
     s_axis_count = axis_count;
     memset(&s_upd, 0, sizeof(s_upd));
 #if CONFIG_TFW_DEBUG_GPIO >= 0
@@ -238,15 +239,44 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
              (unsigned long)res_hz, (unsigned long)upd_us, mode == TFW_UPD_HWTIMER ? "HWTIMER" : "TASK_10MS",
              (unsigned)s_max_ticks, (unsigned long)(res_hz / s_max_ticks + 1));
 
-    esp_err_t e = create_axis(0, CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO);
+    ESP_LOGI(TAG, "update reference period %lu us (%s); cpu %lu MHz; ISR core %d; levels: estop=%d pcnt=%d gpt=%d (0=default)",
+             (unsigned long)s_ref_us, mode == TFW_UPD_TASK_10MS ? "task mode: fixed 10 ms" : "cfg_upd_us", (unsigned long)s_cpu_mhz,
+             (int)esp_cpu_get_core_id(), CONFIG_TFW_IRQ_PRIO_ESTOP, CONFIG_TFW_IRQ_PRIO_PCNT, CONFIG_TFW_IRQ_PRIO_GPT);
+
+    /* M-08: pin conflict check. Axis 1 pins, axis 2 pins, e-stop, debug, probe and the pins the existing servo1axis
+     * code uses for other purposes (PHY reset 51, servo outputs 23/26/27/46). EMAC/RMII pins of the board: UNCONFIRMED. */
+    const int ax1[3] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO};
+    const int ax2[3] = {CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO};
+    const int other[] = {CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO,
+                         51, 23, 26, 27, 46};
+    const size_t n_other = sizeof(other) / sizeof(other[0]);
+    esp_err_t e = ESP_OK;
+    if (tfw_pin_conflict(ax1, 3, other, n_other) || ax1[0] < 0 || ax1[1] < 0 || ax1[2] < 0) {
+        ESP_LOGE(TAG, "axis 1 pins conflict with another function or are unset: axis 1 NOT created");
+        s_ax[0].err = ESP_ERR_INVALID_ARG;
+        return ESP_ERR_INVALID_ARG;
+    }
+    e = create_axis(0, ax1[0], ax1[1], ax1[2]);
     if (e != ESP_OK) return e;                    /* axis 1 is mandatory */
     if (axis_count == 2) {
-        esp_err_t e2 = create_axis(1, CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO);
+        esp_err_t e2;
+        int all1[sizeof(other) / sizeof(other[0]) + 3]; memcpy(all1, other, sizeof(other)); memcpy(all1 + n_other, ax1, sizeof(ax1));
+        if (ax2[0] < 0 || ax2[1] < 0 || ax2[2] < 0) {
+            e2 = ESP_ERR_INVALID_ARG;
+            ESP_LOGW(TAG, "axis 2 pins unset (-1): axis 2 not created -> tst_status 0x12 (set TFW_AX2_* in menuconfig)");
+        } else if (tfw_pin_conflict(ax2, 3, all1, n_other + 3)) {
+            e2 = ESP_ERR_INVALID_ARG;
+            ESP_LOGE(TAG, "axis 2 pins conflict with axis 1 / e-stop / debug / probe / reserved pins: axis 2 not created");
+        } else {
+            e2 = create_axis(1, ax2[0], ax2[1], ax2[2]);
+        }
+        s_ax[1].err = (int)e2;
         if (e2 != ESP_OK) ESP_LOGW(TAG, "axis 2 NOT available (esp_err 0x%x): group 1 / PCNT unit 2 / pins -> tst_status 0x12", (unsigned)e2);
     }
 
     if (mode == TFW_UPD_HWTIMER) {
-        gptimer_config_t gc = {.clk_src = GPTIMER_CLK_SRC_DEFAULT, .direction = GPTIMER_COUNT_UP, .resolution_hz = 1000000};
+        gptimer_config_t gc = {.clk_src = GPTIMER_CLK_SRC_DEFAULT, .direction = GPTIMER_COUNT_UP, .resolution_hz = 1000000,
+                               .intr_priority = CONFIG_TFW_IRQ_PRIO_GPT};         /* M-03 (0 = driver default) */
         ESP_RETURN_ON_ERROR(gptimer_new_timer(&gc, &s_gpt), TAG, "gptimer");
         gptimer_alarm_config_t al = {.alarm_count = upd_us, .reload_count = 0, .flags.auto_reload_on_alarm = true};
         ESP_RETURN_ON_ERROR(gptimer_set_alarm_action(s_gpt, &al), TAG, "gptimer alarm");
@@ -264,6 +294,7 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
 }
 
 void tfw_pulse2_set_update_core(int core) { s_upd_core = core; }
+void tfw_pulse2_set_cpu_mhz(uint32_t mhz) { if (mhz) s_cpu_mhz = mhz; }      /* m-02: measured clock */
 bool tfw_pulse2_axis_ok(uint8_t axis) { return axis < MAX_AXES && s_ax[axis].ok; }
 int  tfw_pulse2_axis_err(uint8_t axis) { return axis < MAX_AXES ? s_ax[axis].err : ESP_ERR_INVALID_ARG; }
 mcpwm_gen_handle_t  tfw_pulse2_generator(uint8_t axis) { return axis < MAX_AXES ? s_ax[axis].gen : NULL; }
@@ -428,8 +459,16 @@ void tfw_pulse2_probe_caps(tfw_caps_t *out)
 
     if (out->max_period_ticks > 0 && out->max_period_ticks < s_max_ticks) s_max_ticks = out->max_period_ticks;   /* never raised above the assumed 65535 */
 
+    const int taken[] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
+                         CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO, CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_DEBUG_GPIO,
+                         CONFIG_TFW_DEBUG_GPIO_ESTOP, 51, 23, 26, 27, 46};
+    const bool probe_ok = pin >= 0 && !tfw_pin_conflict(&pin, 1, taken, sizeof(taken) / sizeof(taken[0]));   /* M-08 */
+    if (!probe_ok) {
+        ESP_LOGW(TAG, "probe pin %d unset or used by another function: generator-2 / PCNT-channel-2 probes SKIPPED (not tested)", pin);
+        out->err_gen2 = out->err_pcnt_ch2 = ESP_ERR_INVALID_STATE;
+    }
     /* second generator on one operator (group 0) */
-    {
+    if (probe_ok) {
         mcpwm_timer_handle_t t = NULL; mcpwm_oper_handle_t o = NULL; mcpwm_gen_handle_t g1 = NULL, g2 = NULL;
         mcpwm_timer_config_t c = {.group_id = 0, .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT, .resolution_hz = 10000000,
                                   .count_mode = MCPWM_TIMER_COUNT_MODE_UP, .period_ticks = 1000};
@@ -446,7 +485,7 @@ void tfw_pulse2_probe_caps(tfw_caps_t *out)
     }
 
     /* two channels on one PCNT unit */
-    {
+    if (probe_ok) {
         pcnt_unit_handle_t u = NULL; pcnt_channel_handle_t c1 = NULL, c2 = NULL;
         pcnt_unit_config_t uc = {.low_limit = -1, .high_limit = 30000};
         e = pcnt_new_unit(&uc, &u);
@@ -463,6 +502,9 @@ void tfw_pulse2_probe_caps(tfw_caps_t *out)
     out->etm_pcnt_ok = false;
     out->err_etm = ESP_ERR_NOT_SUPPORTED;
 
+    /* m-04: the 2nd generator / channel use gpio -1; ESP_ERR_INVALID_ARG there is an argument problem, not a resource limit */
+    if (probe_ok && out->err_gen2 == ESP_ERR_INVALID_ARG) ESP_LOGW(TAG, "gen2 probe: INVALID_ARG (gpio -1 not accepted) -> UNDETERMINED, not 'no resource'");
+    if (probe_ok && out->err_pcnt_ch2 == ESP_ERR_INVALID_ARG) ESP_LOGW(TAG, "pcnt ch2 probe: INVALID_ARG (gpio -1 not accepted) -> UNDETERMINED, not 'no resource'");
     ESP_LOGI(TAG, "CAPS group1_ok=%d (err 0x%x) gen2_ok=%d (err 0x%x) pcnt_ch2_ok=%d (err 0x%x) max_period_ticks=%lu etm=NOT_TESTED",
              out->group1_ok, (unsigned)out->err_group1, out->gen2_ok, (unsigned)out->err_gen2,
              out->pcnt_ch2_ok, (unsigned)out->err_pcnt_ch2, (unsigned long)out->max_period_ticks);

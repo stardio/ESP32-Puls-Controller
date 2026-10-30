@@ -9,6 +9,8 @@
 
 ## 0. 상태 요약 (먼저 읽을 것)
 
+- **리뷰 1차 반영(반복 2회차, 2026-10-30)**: 아래 §8에 지적별 반영·반박 표가 있다. §1~§7은 1회차 기록이며, 달라진 부분은 §8이 우선한다(테스트 수·결과는 §3 끝의 "2회차 결과", 축2 핀 기본값은 §8).
+
 - **호스트에서 실행·검증한 것**: 하드웨어와 무관한 로직 전부(프로파일, 주파수 분해능, 레지스터 창 인코딩·범위검사, 시퀀서, 판정, 비상정지 래치 규칙, Modbus PDU 엔진, TFW-05 Python 도구).
 - **미검증(사용자 PC에서 실행 필요)**: ESP-IDF 빌드, 보드 위 동작 전부(MCPWM/PCNT/GPTimer/EMAC/GPIO 인터럽트 코드, 부팅 로그, 실측). 이 컨테이너에는 ESP-IDF와 보드가 없고, 설치하지 않았다.
 - 펌웨어 C 파일(tfw_pulse2.c, tfw_estop_io.c, tfw_modbus.c, tfw_main.c)은 **ESP-IDF 헤더 없이 스텁으로 문법만 검사**(`gcc -fsyntax-only`, 오류 0, 스텁 한계로 인한 무관한 경고만)했다. ESP-IDF API 이름·시그니처는 기억과 기존 코드(servo1axis)에 근거했고 **실제 헤더와 대조하지 못했다**. 빌드 시 컴파일 오류가 나면 해당 API 부분부터 확인한다(§6 위험 목록).
@@ -85,6 +87,22 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
   - 모의 서버의 `CLEAR_STATS`가 카운터를 지우지 않았음, LA 합성 CSV의 시간 해상도(ns)가 285,714 Hz 검사에 부족함(1건씩).
   - 최초 C 실행 중 테스트 코드의 버퍼 크기 오류로 스택 파손이 한 번 났다(테스트 코드의 해당 줄 삭제 — 대형 읽기는 `t_mb_window_125_registers_and_writes`가 따로 검증).
 
+### 2회차 결과 (리뷰 1차 반영 후, 실제 실행 그대로)
+
+```
+$ cd project/04_code/tests/test-fw && make run
+  (gcc -std=c11 -Wall -Wextra -O1 ... -lm, 경고 없음)
+  38개 테스트 함수 전부 PASS, checks=16583 failed=0
+
+$ cd project/04_code/tests/test-fw && python3 -m pytest -q
+  212 passed in 30.68s
+```
+
+- 1회차 대비 C 7개 함수(검사 +30건), pytest +182건(`test_judge_regress.py` 161, `test_firmware_static.py` 12, `test_expect.py` 9).
+- 도중 실패 이력(삭제·약화 없이 원인을 고침): (1) `wait_status=None`(타임아웃)을 "키 누락"으로 처리해 NOT_RUN이 나옴 -> 타임아웃은 FAIL이어야 하므로 판정 코드를 고침(테스트 6건이 잡음). (2) T-05 접속 거부 시험이 실패 -> 펌웨어는 접속을 받은 뒤 닫으므로 `connect()` 성공만 보면 거부가 안 잡힘. 부하 클라이언트가 첫 요청에서 연결이 닫히면 거부로 세도록 `load.py`를 고침(실제 결함, C-03 보강). (3) C 시험 `t_r1_seq_aborted...`가 "중단 시 오차 0"을 가정했으나 fake 기계에서는 중단된 반복이 오차 1로 센다 -> 가정이 틀렸으므로 검사 문구를 고침. (4) `test_firmware_static.py`가 주석 속 단어를 호출로 읽음 -> 주석 제거 후 검사.
+- **회귀 시험이 실제로 결함을 잡는지 확인**: 1회차 코드(`git archive HEAD`)를 임시 폴더에 풀어 새 `test_judge_regress.py`/`test_firmware_static.py`를 돌리면 166건 실패, 7건 통과(대부분 판정 키 누락·미구현 항목). 새 판정 규칙에서는 거짓 합격 시나리오(거부·타임아웃·중단·외부 계수 없음·접속 거부·NVS 부하 0·iram 불일치)가 모두 PASS가 아니다.
+- 기존 시험 변경: `test_run_scenario_t03_to_t09_with_mock`의 T-04 기대값을 PASS에서 NOT_RUN으로, `test_judge_rules`는 판정 입력 계약(실행 결과 키 필수)에 맞춰 입력을 완전한 실행 결과로 바꿨다. 이는 1회차 판정이 "반복 10회, 외부 계수 없음, 완료 확인 없음"에서 PASS를 낸 것이 결함이었기 때문이며 기준을 낮춘 것이 아니라 높인 것이다.
+
 ### 완료 기준별 검증 현황
 
 | 모듈 | # | 기준 | 호스트에서 검증한 부분 | 남은 것 |
@@ -109,7 +127,7 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 
 전제: ESP-IDF 5.5.3 설치, Waveshare ESP32-P4-ETH 보드, 로직 분석기(4채널 이상, 최소 10 MS/s [가정]), 스위칭 허브. 기존 IP101 배선(192.168.0.220)과 기존 HMI 연결을 그대로 쓴다.
 
-1. **준비**: `cd project/04_code/test-fw && idf.py set-target esp32p4`. `idf.py menuconfig` → "TFW test firmware"에서 **축2 핀(`TFW_AX2_*`, 기본값 2/3/4는 근거 없는 임시값), 비상정지 극성, 디버그 GPIO, 최대 접속 수**를 실제 배선에 맞춘다. 축2 핀이 보드 내부 사용 핀과 겹치면 안 된다(PS-27 미확인).
+1. **준비**: `cd project/04_code/test-fw && idf.py set-target esp32p4`. `idf.py menuconfig` → "TFW test firmware"에서 **축2 핀(`TFW_AX2_*`, 2회차부터 기본값 -1 = 축2 생성 안 함, 반드시 지정), 비상정지 극성, 디버그 GPIO, 최대 접속 수, probe 핀(기본 -1 = probe 생략)**을 실제 배선에 맞춘다. 축2 핀이 보드 내부 사용 핀(EMAC/RMII 등, 미확인 PS-27)과 겹치면 안 된다. 부팅 시 코드가 축1·축2·비상정지·디버그·probe·기존 코드 사용 핀(PHY 리셋 51, 서보 출력 23/26/27/46)과의 중복만 검사한다.
 2. **빌드(IRAM on/off 두 벌)**:
    - `idf.py -B build_on -D SDKCONFIG=sdkconfig.on -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.tfw_iram_on" build`
    - `idf.py -B build_off -D SDKCONFIG=sdkconfig.off -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.tfw_iram_off" build`
@@ -152,3 +170,62 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 6. **(확인 요청) 축2 핀**: 기본값 GPIO2/3/4는 근거 없는 임시값이다. 사용자 배선으로 지정해야 하며 PS-27 결과가 나오기 전에는 확정할 수 없다. 해당 핀이 W5500 후보 핀(설계 문구)이지만 이번 보드에서 다른 용도로 쓰이는지는 미확인.
 7. **(확인 요청) 시험 레지스터 창에 `probe_caps` 결과 주소 없음**: TFW-02 §3은 "④에서 주소 배정"으로 남겨 두었다. 부팅 로그에만 있다.
 8. 실행하지 못한 항목 전체는 §0과 §3의 "남은 것" 열이다. 빌드가 한 번도 되지 않았으므로 **빌드 성공 여부 자체가 미검증**이다.
+
+## 8. 리뷰 1차(`reviews/test-fw-review-1.md`) 지적별 반영·반박 (반복 2회차)
+
+판정 요약: Critical 3 전부 반영, Major 9 중 반영 7, 부분 반영(코드는 고치고 확인은 HIL) 2(M-02, M-05는 "수정 또는 HIL 절차 명시" 조건에 따라 절차 명시), 반박 0. Minor 10 중 반영 8, 문서/HIL 대응 2(m-08, m-10).
+펌웨어 C 변경은 ESP-IDF가 없어 **빌드·실행하지 못했다**(호스트 로직 시험과 소스 형태 시험만 통과). 새로 쓴 IDF API 필드(`pcnt_unit_config_t.intr_priority`, `gptimer_config_t.intr_priority`, `ESP_INTR_FLAG_LEVELn`)는 헤더와 대조하지 못했다 -> §6 목록에 추가.
+
+### Critical
+
+| ID | 결과 | 반영 내용 (파일) | 증명 시험 |
+|---|---|---|---|
+| C-01 | 반영 | `judge.py`: `_precheck`가 T-03~T-09 공통으로 `wait_status == DONE`, `timed_out == False`, `seq_done == (RUN_SEQ ? repeat : 1)`, 파라미터 쓰기 후 status != 0x11, 쓴 값 읽기 일치, CLEAR_STATS 성공(카운터 0), SEED 불변, 필수 키 존재를 요구. 거부(0x10/0x11/0x12)·중단(IDLE)·타임아웃·seq_done 부족은 FAIL, 키 누락은 NOT_RUN. T-04/05/06은 2축(axis_mask 3)과 반복 >= 1,000(architecture 6.1 "축당 1,000회" [가정])도 요구, 미달이면 NOT_RUN. `scenario.py`: 실행 전 STOP_ALL로 묵은 status 제거, CLEAR_STATS 확인, 입력 전부 쓰기 후 status와 값 읽기 대조(`_write_params`). T-08·T-09·T-03도 같은 전제를 적용(거부된 실행 + 묵은 LA 파일 = 거짓 합격 방지). | `test_judge_regress.py::test_c01_*`(매개변수 조합 포함 다수), `test_e2e_t04_rejected_run_is_fail`, `..._aborted_...`, `..._timeout_...`, `..._out_of_range_parameter_...`(모의 장치 모드: reject/abort/hang/0x11), `test_logic.c::t_r1_seq_aborted...` |
+| C-02 | 반영 | `judge.py`: 외부 계수가 없으면(또는 기대값이 없으면) T-04/05/06은 **NOT_RUN**("PCNT=목표는 출력 핀 자체를 센 값이라 누락을 검출하지 못함"), 계수가 틀리면 FAIL. `expect.py`: 호스트가 펌웨어와 같은 xorshift32와 소비 순서로 **축별** 목표 합을 재현(`expected_edges`), `analyse_la`가 축별 기대 엣지 리스트로 비교(스칼라는 모든 축에 적용, 리스트는 축별). 펌웨어 출력 레지스터를 추가하는 대안은 설계 주소 배정 이슈(0x7040 영역)를 피하려고 택하지 않음. | `test_expect.py`(재현 값 = 실제 C `tfw_seq_run`이 하드웨어에 준 목표 합, 7개 조합: 무작위 2축/1축/seed 0/RUN_MOVE/RUN_FIXED), `test_c02_per_axis_expectation_random_sequence`(두 축 기대값이 서로 다름 = 옛 코드의 단일 값 비교는 정상 장치에서도 불일치), `test_e2e_t04_lost_pulse_seen_only_externally`(PCNT 오차 0인데 외부 1펄스 부족 -> FAIL), `test_e2e_t04_without_external_count_is_not_pass` |
+| C-03 | 반영 | T-05: `refused == 0`, 부하 `requests > 0`, 실행 중 `MB_CLIENTS` 최댓값 >= 1(제어)+부하 수+HMI, 빌드 `max_clients`(새 읽기 전용 레지스터 0x705E, 아래 설계 차이 참고) >= 필요 접속 수를 요구. 부하 4개 미만 또는 `hmi` 미지정이면 NOT_RUN. `load.py`: 첫 요청에서 연결이 닫히면 거부로 계산(펌웨어는 accept 후 close). T-06: `nvs_writes >= max(1, 실행시간/주기 x 0.5 [가정])`, `iram_safe`는 장치 `cfg_flags` b0(0x7012)로 판정하고 시나리오 값이 다르면 FAIL. | `test_c03_*`, `test_e2e_t05_default_max_clients_4_is_fail_not_pass`(기본 4 빌드 모의 장치: 거부 > 0 -> FAIL), `test_e2e_t05_with_enough_connections_passes`, `test_e2e_t06_nvs_load_must_run`(장치가 off 빌드면 FAIL), `test_c03_t06_iram_flag_comes_from_device`, `t_r1_max_clients_register` |
+
+### Major
+
+| ID | 결과 | 반영 내용 | 증명 |
+|---|---|---|---|
+| M-01 | 반영 | `tfw_es_trip`을 `tfw_logic.h`의 `always_inline`으로 옮겨 IRAM의 `es_isr` 안에 컴파일되게 함(`tfw_core.c`의 플래시 사본 삭제). ISR 안의 `esp_timer_get_time()`을 `esp_cpu_get_cycle_count()`로 교체(트립 후 10 ms 판정은 태스크가 사이클 차이로 계산). `tfw_estop_input_active`에 `IRAM_ATTR`. `ESP_INTR_FLAG_IRAM`은 `CONFIG_PCNT_ISR_IRAM_SAFE` 빌드에서만 사용(iram_off 빌드는 일반 ISR). ISR 안에서 부르는 `tfw_pulse2_stop`/`count_isr`은 1회차부터 IRAM_ATTR. ISR 경로의 인라인 `tfw_upd_record`/`tfw_profile_freq`/`tfw_sat_mul`도 always_inline. `check_iram.sh` 목록에 `tfw_es_trip`, `tfw_upd_record`, 드라이버 함수(`pcnt_unit_get_count`, `mcpwm_generator_set_force_level` 등) 추가. **남은 확인(HIL)**: iram_on 빌드에서 드라이버 함수가 실제 IRAM에 있는지는 `check_iram.sh` 결과로만 알 수 있다. | `test_firmware_static.py::test_m01_*`(es_isr 호출 집합 제한, 인라인 정의, IRAM 플래그 조건부) |
+| M-02 | HIL 절차 명시(코드 미변경) | ISR 안 FPU 사용 가부는 IDF 5.5 문서로 확인하지 못했다(검토자와 동일, **미확인**). 확인 전에는 HWTIMER 모드의 첫 이동에서 패닉이 나면 `CONFIG_TFW_UPD_MODE_HWTIMER=n`(10 ms 태스크)으로 바꿔 비교한다. 정수 연산 전환은 MOD-07 연산 형식 결정(이슈 5)과 묶여 있어 임의로 바꾸지 않음. m-07의 `-fno-math-errno`만 적용. | HIL 첫 빌드: HWTIMER 모드로 1회 이동 시 패닉·레지스터 깨짐 유무 |
+| M-03 | 반영(설정화) | `Kconfig`: `TFW_IRQ_PRIO_ESTOP`(기본 3) > `TFW_IRQ_PRIO_PCNT`(2) > `TFW_IRQ_PRIO_GPT`(1), 0이면 드라이버 기본값. PCNT 유닛·GPTimer·GPIO ISR 서비스에 각각 적용. 부팅 로그에 레벨과 ISR 코어(비상정지는 app_main 코어, PCNT/GPT는 갱신 코어) 출력. 기본값 대 명시값 비교는 빌드 옵션(세 값을 0으로)으로 가능하며 T-07·T-08 결과에 우선순위 구성을 조건으로 적어야 한다. 단, 레벨 번호가 P4에서 실제 우선순위로 해석되는 방식과 비상정지 ISR이 다른 코어에 놓일 때의 영향은 **미확인**. | `test_firmware_static.py::test_m03_*`(ESTOP > PCNT > GPT > 0, 필드 사용) |
+| M-04 | 반영 | `tfw_es_boot_check`: 초기화 때 입력이 이미 활성이면 즉시 래치. `tfw_es_blocking`(래치 또는 입력 활성)을 `tfw_cmd_check` 호출, 시퀀서 abort 판정, 레거시 START 모두에 사용(`tfw_estop_blocking()`). | `t_r1_estop_active_at_boot_latches_and_blocks`, `t_r1_input_active_blocks_even_when_not_latched`, `test_m04_*` |
+| M-05 | HIL 절차 명시 | 정지 상태 첫 주기 적용은 코드 확인 불가. `scenario_example.yaml` 첫 항목에 "1 MHz 운전 후 5 kHz로 시작, 첫 2~3주기를 LA로 확인" 단계를 넣었다. 문제가 확인되면 정지 중 즉시 갱신 경로로 되돌린다(수정 방향 합의, HIL 결과 후 진행). | HIL(LA 캡처) |
+| M-06 | 반영 | `tfw_upd_ref_us(task_mode, cfg_us)`: 태스크 모드 기준 주기 10,000 µs 고정. `tfw_pulse2_init`이 부팅 로그에 "update reference period"와 모드를 남긴다. 결과 레지스터에는 모드 항목이 없다(주소 배정 이슈, 이슈 제기 3). | `t_r1_task_mode_reference_period`(10 ms 주기에서 late 0, 옛 기준은 99건, 16 ms 간격은 1건 검출) |
+| M-07 | 반영 | 부하의 FC16이 SEED를 **현재 값으로 되쓰기**(시작 시 읽은 값)만 하도록 변경. 실행 후 SEED를 다시 읽어 `seed_changed`로 기록, 바뀌면 FAIL. | `test_m07_tcp_load_never_changes_seed`(모의 장치 SEED가 777 유지), `test_m07_seed_change_during_run_is_fail` |
+| M-08 | 반영 | 축2 핀과 probe 핀 기본값 -1(축2 미생성 -> 0x12, probe 생략). 부팅 때 `tfw_pin_conflict`로 축1·축2·비상정지·디버그·probe·기존 사용 핀(51, 23, 26, 27, 46) 중복 검사, 겹치면 해당 축/probe를 만들지 않음. EMAC/RMII 핀 목록은 **미확인**이라 검사에 넣지 못함(보드 회로도 확인 필요). | `t_r1_pin_conflict`(옛 기본값 probe 2 = 축2 PLS 2 충돌 재현), `test_m08_*` |
+| M-09 | 반영 | `relaunch_after_latch`를 측정: `latch_probe` 단계가 래치 중 RUN을 보내 0x10 거부, 상태 RUNNING/DONE 아님, `seq_done` 불변을 확인(`probe_latched_run`). 래치가 아니면 측정 불가(None) -> 보고서에 "미측정(합격 근거 아님)". 핀 펄스 0 확인은 LA 몫이라고 사유에 적음. | `test_m09_*`(래치/비래치/시작됨 3경우, 미측정 문구, 모의 장치 종단) |
+
+### Minor
+
+| ID | 결과 | 내용 |
+|---|---|---|
+| m-01 | 반영 | `tfw_sat_mul`(`__builtin_mul_overflow`, 인라인) 두 번 적용. `t_r1_sat_mul_no_wrap` |
+| m-02 | 반영 | 측정한 CPU MHz를 `tfw_pulse2_set_cpu_mhz`/`tfw_estop_set_cpu_mhz`로 전달 |
+| m-03 | 반영 | 명령 처리(`tfw_handle_cmd`, `on_effect`)를 뮤텍스로 직렬화, 시퀀서 실행 중 레거시 START 거부(`seq_busy` 훅) |
+| m-04 | 반영 | 2번째 제너레이터/채널 probe가 `ESP_ERR_INVALID_ARG`이면 "판정 불가, 자원 부족 아님"으로 로그. probe 핀 미지정이면 건너뜀 |
+| m-05 | 반영 | T-03 합격을 10 s **평균** 주파수 >= 200 kHz(허용오차 0.01% [가정], 기록)로 판정, 최저 순간 주파수는 기록만. 199.5 kHz는 FAIL. `test_m05_*` |
+| m-06 | 반영 | 시나리오 `la_trigger_edge`(기본 fall), `estop_active_low`와 다르면 `la_trigger_edge_mismatch` -> T-07 NOT_RUN. `test_m06_*` |
+| m-07 | 반영 | 프로젝트 `idf_build_set_property(COMPILE_OPTIONS "-fno-math-errno" APPEND)`. 효과는 빌드 후 `check_iram.sh`로 확인(미실행) |
+| m-08 | 문서(HIL) | 경로 A 단독 측정 때 OST 브레이크 영향 유무는 LA로 먼저 확인해야 한다(미확인). 영향이 있으면 경로 A 시험은 fault를 바인딩하지 않은 빌드로 한다 |
+| m-09 | 반영 | `clear_stats`는 요청 플래그만 세우고 NVS 태스크가 스스로 지움(태스크를 알림으로 깨움). `test_m09_clear_stats_...` |
+| m-10 | 이슈 제기 | architect 판단 사항(아래 이슈 3) |
+
+### 설계와 다른 점 (2회차 추가)
+
+| # | 설계서 | 구현 | 사유 |
+|---|---|---|---|
+| 14 | TFW-03 시험 창에 `max_clients` 출력 없음 | 읽기 전용 U16 0x705E(`mb_max_clients`) 추가 | 리뷰 C-03이 빌드의 max_clients를 레지스터로 내보내라고 권고. 0x705E는 설계서에서 비어 있는 주소(히스토그램 0x7056~0x705D 다음). 설계서는 수정하지 않았다 |
+| 15 | TFW-05 판정 입력 | 판정 입력에 실행 상태·파라미터 읽기 값·접속 수 등이 필수 | C-01~03 |
+| 16 | 축2 핀 기본값 2/3/4 | 기본 -1 | M-08 |
+
+### 이슈 제기 (2회차 갱신, 설계 모순은 설계서를 고치지 않음)
+
+1. **T-05 접속 수 6개 대 최대 4개(설계 모순)**: architecture 6.1 T-05는 제어 1 + 부하 4 + HMI 1 = 6이고 TFW-03은 최대 4이며 5번째 거부가 완료 기준이다. 판정은 이 모순으로 거짓 합격이 나지 않게 처리했다: 기본 빌드(4)에서는 접속 거부 또는 `max_clients < 6`으로 **FAIL**, 부하 4개 미만이나 HMI 미지정이면 **NOT_RUN**. 어떤 경우에도 PASS가 나오려면 6개 접속이 실제로 관측돼야 한다. 결정 후보(사용자 확정 필요, 리뷰와 동일): (a) 제품 `max_clients`에 제어·HMI를 포함해 기본값을 6 이상으로 올린다, (b) 4를 유지하고 T-05 조건을 "부하 2 + HMI 1 + 제어 1"로 바꾼다. 판정 상수 `T05_MIN_CLIENTS`가 (b) 선택 시 바뀐다.
+2. **0x7040 영역 방향(설계 모호)**: TFW-01 0x7004 행의 "축별은 0x7040~"과 출력 행 0x7040~ "축별 마지막 목표·PCNT"가 충돌. 출력 전용으로 구현했고 외부 계수 기대값은 호스트 재현(`expect.py`)으로 풀어 이 영역에 입력이 필요 없게 했다. 설계서의 0x7004 행 문구 정정과 `probe_caps` 결과·모드(HWTIMER/TASK) 출력 주소 배정이 필요하다(architect).
+3. **축2 핀 임시값**: 기본값을 -1로 바꿔 임시 핀으로 바로 구동하지 않게 했다. 실제 핀은 PS-27 이후 사용자가 지정해야 하며 EMAC/RMII 사용 핀과의 중복 검사는 목록이 없어 하지 못했다. `es_isr_lat_ns` 내부 측정 없음(m-10)은 "외부 측정만 인정"으로 할지 architect가 정해야 한다.
+4. **ISR 우선순위 배치(architect)**: 비상정지 > 감시점 > 갱신 > 통신 순서를 TFW-02/04 제약에 명시할지(T-07·T-08 해석의 전제). 현재는 Kconfig 기본값으로 구현했고 P4에서의 효과는 미확인.
+5. **ISR 안 FPU(M-02)**와 MOD-07 연산 형식: 1회차 이슈 5에 "IDF 5.5 FreeRTOS(IDF) 문서의 FPU 사용 제한 확인 필요"를 추가한다.
+6. 위 모든 펌웨어 변경은 **빌드되지 않았다**. 첫 빌드 오류는 §6 목록과 이번에 추가한 `intr_priority` 필드, `esp_cpu_get_core_id` 사용 부분부터 확인한다.

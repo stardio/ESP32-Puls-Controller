@@ -88,6 +88,17 @@ uint32_t tfw_rand_distance(uint32_t *state);             /* T-04 distance set */
 void     tfw_rand_motion(uint32_t *state, uint32_t max_speed, uint32_t *speed, uint32_t *accel_ms, uint32_t *decel_ms);
 uint32_t tfw_load_busy_ms(uint32_t pct, uint32_t period_ms);
 
+/* m-01: saturating 32-bit multiply (inline, no libgcc call, ISR-safe) */
+TFW_INLINE uint32_t tfw_sat_mul(uint32_t a, uint32_t b)
+{
+    uint32_t r;
+    return __builtin_mul_overflow(a, b, &r) ? UINT32_MAX : r;
+}
+/* M-06: reference period for the "late" test. In 10 ms task mode the real period is 10 ms, not cfg_upd_us. */
+TFW_INLINE uint32_t tfw_upd_ref_us(bool task_mode, uint32_t cfg_upd_us) { return task_mode ? 10000u : cfg_upd_us; }
+/* M-08: true if any pin of a[] (>= 0) appears twice in a[] or also appears in b[] (>= 0). */
+bool tfw_pin_conflict(const int *a, size_t na, const int *b, size_t nb);
+
 /* ---------- results snapshot (single-writer fields) ---------- */
 typedef struct {
     uint32_t seq_done, err[2], overshoot[2];
@@ -95,7 +106,7 @@ typedef struct {
     uint32_t nvs_writes, nvs_max_ms;
     uint16_t chip_rev, cpu_mhz;
     uint32_t last_target[2], last_pcnt[2];
-    uint16_t mb_clients, mb_link_down;
+    uint16_t mb_clients, mb_link_down, mb_max_clients;
     uint32_t mb_req_count, mb_proc_max_us;
     uint16_t mb_hist[8];
     uint16_t es_state, es_trip_count;
@@ -160,7 +171,18 @@ typedef struct {
 #define TFW_ES_RELEASE_STABLE_MS 10u   /* [assumed] */
 void     tfw_es_init(tfw_es_t *e);
 bool     tfw_es_path_valid(uint8_t sel);
-void     tfw_es_trip(tfw_es_t *e, uint32_t c0, uint32_t c1);
+/* ISR-callable (M-01): always_inline so that it is compiled into the IRAM ISR and never lives in flash. */
+TFW_INLINE void tfw_es_trip(tfw_es_t *e, uint32_t c0, uint32_t c1)
+{
+    e->snap[0] = c0; e->snap[1] = c1;
+    e->latched = 1;
+    e->stable_ms = 0;
+    e->trip_count++;
+}
+/* M-04: a run command must be refused while latched OR while the input is still active (e.g. active at boot). */
+TFW_INLINE bool tfw_es_blocking(const tfw_es_t *e, bool input_active) { return e->latched != 0 || input_active; }
+/* M-04: call once at init with the level read after the GPIO is configured: latches if already active. */
+void     tfw_es_boot_check(tfw_es_t *e, bool input_active);
 uint16_t tfw_es_state(const tfw_es_t *e, bool input_active);
 uint16_t tfw_es_release(tfw_es_t *e, bool input_active);   /* 0 ok, TFW_ST_REJECT_BUSY if refused */
 void     tfw_es_input_sample(tfw_es_t *e, bool input_active, uint32_t dt_ms);

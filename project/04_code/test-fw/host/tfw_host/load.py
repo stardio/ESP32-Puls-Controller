@@ -49,7 +49,7 @@ class LoadStats:
         }
 
 
-def _worker(host, port, unit, fc, qty, interval_s, stop_evt, out, lock, base_addr):
+def _worker(host, port, unit, fc, qty, interval_s, stop_evt, out, lock, base_addr, write_addr=None):
     st = LoadStats()
     try:
         cli = ModbusTcpClient(host, port, unit, timeout=2.0).connect()
@@ -60,13 +60,30 @@ def _worker(host, port, unit, fc, qty, interval_s, stop_evt, out, lock, base_add
             out.append(st)
         return
     n = 0
+    # M-07: FC16 writes the value the register ALREADY has (read once at start) back to the same place, so the load
+    # can never change the SEED (or any other input) the sequencer reads at RUN time.
+    wa = regs.R["SEED"] if write_addr is None else write_addr
+    try:
+        wvals = cli.read_holding(wa, 2)
+    except ModbusTimeout:
+        st.errors += 1
+        st.timeouts += 1
+        wvals = [0, 0]
+    except (ModbusError, OSError):
+        # The firmware accepts the TCP connection and then closes it when max_clients is reached: a closed connection on
+        # the very first request is a refused client (C-03). connect() alone cannot show this.
+        st.errors += 1
+        st.refused += 1
+        cli.close()
+        with lock:
+            out.append(st)
+        return
     try:
         while not stop_evt.is_set():
             try:
                 use16 = (fc == "FC16") or (fc == "MIX" and n % 2 == 1)
                 if use16:
-                    # harmless target: the seed register (32 bit, written as a pair)
-                    cli.write_registers(regs.R["SEED"], regs.split_u32(n & 0xFFFFFFFF))
+                    cli.write_registers(wa, wvals)
                 else:
                     cli.read_holding(base_addr, qty)
                 st.requests += 1
@@ -109,7 +126,7 @@ class _Running:
         return res
 
 
-def start_load(target: str, n: int, fc: str = "FC03", qty: int = 125, interval_ms: float = 0.0, base_addr: int = 0x7000, unit: int = 1):
+def start_load(target: str, n: int, fc: str = "FC03", qty: int = 125, interval_ms: float = 0.0, base_addr: int = 0x7000, unit: int = 1, write_addr=None):
     host, _, port = target.partition(":")
     port = int(port or 502)
     stop_evt, out, lock = threading.Event(), [], threading.Lock()

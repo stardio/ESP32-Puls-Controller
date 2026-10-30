@@ -24,7 +24,8 @@ def test_run_scenario_t03_to_t09_with_mock(tmp_path):
         assert len(files) == 7
         r04 = json.load(open([f for f in files if "T-04" in f][0]))
         assert r04["data"]["seq_done"] == 10 and r04["data"]["err_ax1"] == 0
-        assert r04["verdict"]["status"] == "PASS"
+        # review C-01/C-02: 10 repeats (< 1,000) and no external count are NOT a pass, whatever the PCNT counters say
+        assert r04["verdict"]["status"] == "NOT_RUN"
         r05 = json.load(open([f for f in files if "T-05" in f][0]))
         assert r05["data"]["tcp_load"]["requests"] > 0 and r05["data"]["tcp_load"]["errors"] == 0
     finally:
@@ -83,16 +84,25 @@ def test_report_empty_results_still_14_rows(tmp_path):
     assert sum(1 for t in ALL_IDS if f"| {t} |" in txt) == 14
 
 
+def _run_data(**kw):
+    d = dict(wait_status=2, timed_out=False, seq_done=1000, err_ax1=0, err_ax2=0, overshoot_ax1=0, overshoot_ax2=0,
+             cmd="RUN_SEQ", repeat=1000, axis_mask=3, param_status=2, param_mismatch=[], clear_ok=True, upd_late=0,
+             la_edges=[10, 20], la_expected_edges=[10, 20])
+    d.update(kw)
+    return d
+
+
 def test_judge_rules():
-    assert judge("T-04", {"err_ax1": 0, "err_ax2": 0, "external_count_matches": True})["status"] == "PASS"
-    assert judge("T-04", {"err_ax1": 1})["status"] == "FAIL"
-    assert judge("T-04", {"external_count_matches": False})["status"] == "FAIL"
-    assert judge("T-05", {"upd_late": 1})["status"] == "FAIL"
-    assert judge("T-06", {"iram_safe": True, "overshoot_ax1": 2})["status"] == "FAIL"
-    assert judge("T-06", {"iram_safe": False, "overshoot_ax1": 2})["status"] == "RECORD"
-    assert judge("T-03", {"freq_hz": 200000, "la_f_min_hz": 199500.0})["status"] == "PASS"
-    assert judge("T-03", {"freq_hz": 200000, "la_f_min_hz": 150000.0})["status"] == "FAIL"
-    assert judge("T-03", {"freq_hz": 1000000, "la_f_min_hz": 900000.0})["status"] == "RECORD"
+    ok = _run_data()
+    assert judge("T-04", ok)["status"] == "PASS"
+    assert judge("T-04", dict(ok, err_ax1=1))["status"] == "FAIL"
+    assert judge("T-04", dict(ok, la_edges=[10, 19]))["status"] == "FAIL"
+    assert judge("T-06", dict(ok, iram_safe=True, overshoot_ax1=2, nvs_period_ms=100, nvs_writes=50, run_s=10, cfg_flags=1))["status"] == "FAIL"
+    assert judge("T-06", dict(ok, iram_safe=False, overshoot_ax1=2, nvs_period_ms=100, nvs_writes=50, run_s=10, cfg_flags=0))["status"] == "RECORD"
+    t03 = dict(ok, cmd="RUN_FIXED", repeat=1, seq_done=1, freq_hz=200000, la_f_avg_hz=[200000.0, 200000.0], la_edges=[5, 5])
+    assert judge("T-03", t03)["status"] == "PASS"
+    assert judge("T-03", dict(t03, la_f_avg_hz=[150000.0, 200000.0]))["status"] == "FAIL"
+    assert judge("T-03", dict(t03, freq_hz=1000000, la_f_avg_hz=[900000.0, 900000.0]))["status"] == "RECORD"
     assert judge("T-07", {"relaunch_after_latch": 1})["status"] == "FAIL"
-    assert judge("T-09", {"requests_exceeded": [300000]})["status"] == "FAIL"
+    assert judge("T-09", dict(ok, cmd="RUN_FIXED", repeat=1, seq_done=1, freq_checked=True, requests_exceeded=[300000]))["status"] == "FAIL"
     assert judge("T-10", {})["status"] == "NOT_RUN"

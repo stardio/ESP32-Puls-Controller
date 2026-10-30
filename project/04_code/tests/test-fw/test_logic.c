@@ -521,6 +521,88 @@ TEST(t_hist_bins)
     CHECK(tfw_hist_bin(4999) == 6 && tfw_hist_bin(5000) == 7 && tfw_hist_bin(0xFFFFFFFFu) == 7);
 }
 
+/* ===== review round 1 regressions ===== */
+TEST(t_r1_estop_active_at_boot_latches_and_blocks)      /* M-04 */
+{
+    tfw_es_t e; tfw_regwin_t w; tfw_regwin_init(&w, 0); tfw_es_init(&e);
+    CHECK(!tfw_es_blocking(&e, false));
+    CHECK(tfw_es_blocking(&e, true));                     /* input active, never an edge: still blocking */
+    tfw_es_boot_check(&e, true);
+    CHECK(e.latched && e.trip_count == 1);
+    CHECK(tfw_cmd_check(&w, TFW_CMD_RUN_SEQ, false, tfw_es_blocking(&e, true), true) == TFW_ST_REJECT_BUSY);
+    CHECK(tfw_cmd_check(&w, TFW_CMD_RUN_FIXED, false, tfw_es_blocking(&e, true), true) == TFW_ST_REJECT_BUSY);
+    CHECK(tfw_es_release(&e, true) == TFW_ST_REJECT_BUSY && e.latched);        /* still active: no release */
+    tfw_es_input_sample(&e, false, 20);
+    CHECK(tfw_es_release(&e, false) == 0 && !e.latched);
+    CHECK(tfw_cmd_check(&w, TFW_CMD_RUN_SEQ, false, tfw_es_blocking(&e, false), true) == 0);
+    tfw_es_t f; tfw_es_init(&f); tfw_es_boot_check(&f, false);                  /* inactive at boot: nothing */
+    CHECK(!f.latched && f.trip_count == 0);
+    tfw_es_boot_check(&e, true); tfw_es_boot_check(&e, true);                   /* idempotent */
+    CHECK(e.trip_count == 2);
+}
+TEST(t_r1_input_active_blocks_even_when_not_latched)    /* M-04 */
+{
+    tfw_es_t e; tfw_es_init(&e);
+    CHECK(e.latched == 0 && tfw_es_blocking(&e, true));
+}
+TEST(t_r1_sat_mul_no_wrap)                              /* m-01 */
+{
+    CHECK(tfw_sat_mul(132u, 65535u) == 8650620u);
+    /* 2 MHz / 65535 ticks: 500 ns per tick; past=132 pulses -> old 32-bit product 132*65535*500 wrapped */
+    CHECK(tfw_sat_mul(tfw_sat_mul(132u, 65535u), 500u) == UINT32_MAX);
+    CHECK((uint32_t)(132u * 65535u * 500u) != UINT32_MAX);                      /* what the old code computed */
+    CHECK(tfw_sat_mul(0, 12345) == 0 && tfw_sat_mul(3, 4) == 12);
+}
+TEST(t_r1_task_mode_reference_period)                   /* M-06 */
+{
+    CHECK(tfw_upd_ref_us(true, 1000) == 10000u && tfw_upd_ref_us(false, 1000) == 1000u);
+    tfw_upd_stats_t s = {0, 0, 0, 0};
+    uint32_t cyc = 0;
+    for (int i = 0; i < 100; ++i) { tfw_upd_record(&s, cyc, cyc + 400, 400, tfw_upd_ref_us(true, 1000)); cyc += 400u * 10000u; }
+    CHECK(s.late == 0);                                   /* exact 10 ms task cadence is not late */
+    tfw_upd_stats_t o = {0, 0, 0, 0}; cyc = 0;
+    for (int i = 0; i < 100; ++i) { tfw_upd_record(&o, cyc, cyc + 400, 400, 1000); cyc += 400u * 10000u; }
+    CHECK(o.late == 99);                                  /* the old reference (cfg_upd_us) counted every call */
+    tfw_upd_stats_t l = {0, 0, 0, 0}; cyc = 0;
+    for (int i = 0; i < 10; ++i) { tfw_upd_record(&l, cyc, cyc + 400, 400, tfw_upd_ref_us(true, 1000)); cyc += 400u * (i == 5 ? 16000u : 10000u); }
+    CHECK(l.late == 1);                                   /* a real 16 ms gap is still detected */
+}
+TEST(t_r1_pin_conflict)                                 /* M-08 */
+{
+    const int ax1[3] = {25, 32, 33}, ax2_ok[3] = {2, 3, 4}, ax2_dup[3] = {2, 2, 4}, ax2_unset[3] = {-1, -1, -1};
+    const int other[] = {19, -1, -1, -1, 51, 23, 26, 27, 46};
+    CHECK(!tfw_pin_conflict(ax1, 3, other, 9));
+    CHECK(!tfw_pin_conflict(ax2_ok, 3, other, 9));
+    CHECK(tfw_pin_conflict(ax2_dup, 3, other, 9));                              /* duplicate inside the axis */
+    CHECK(!tfw_pin_conflict(ax2_unset, 3, other, 9));                           /* unset pins are not a conflict (axis not created) */
+    const int hit_estop[3] = {19, 5, 6}, hit_phy[3] = {5, 51, 6}, probe_vs_pls = 2;
+    CHECK(tfw_pin_conflict(hit_estop, 3, other, 9));
+    CHECK(tfw_pin_conflict(hit_phy, 3, other, 9));
+    const int taken[] = {2, 3, 4};
+    CHECK(tfw_pin_conflict(&probe_vs_pls, 1, taken, 3));                        /* old default: probe pin 2 == axis 2 pulse pin 2 */
+}
+TEST(t_r1_max_clients_register)                         /* C-03 */
+{
+    tfw_regwin_t w; tfw_results_t r; memset(&r, 0, sizeof r); tfw_regwin_init(&w, 0);
+    uint16_t out[1] = {99};
+    r.mb_max_clients = 8;
+    CHECK(tfw_regwin_read(&w, &r, TFW_R_MB_MAX_CLIENTS, 1, out) == 0 && out[0] == 8);
+    uint16_t v = 3; tfw_wr_effect_t fx; memset(&fx, 0, sizeof fx);
+    CHECK(tfw_regwin_write(&w, TFW_R_MB_MAX_CLIENTS, 1, &v, &fx) == 2);         /* read-only */
+}
+TEST(t_r1_seq_aborted_run_leaves_idle_and_short_seq_done)   /* C-01 premise: the device really reports these */
+{
+    fake_t f; memset(&f, 0, sizeof f); tfw_seq_hw_t h = hw_for(&f);
+    tfw_regwin_t w; tfw_regwin_init(&w, 0); static volatile tfw_results_t res; memset((void *)&res, 0, sizeof res);
+    w.axis_mask = 3; w.repeat = 1000; w.count = 1000;
+    f.abort_flag = true; f.abort_after_ms = 10;
+    uint32_t n = tfw_seq_run(&h, &w, &res, TFW_CMD_RUN_SEQ);
+    /* the host judge must see an abort through status IDLE and seq_done < repeat (err counters of the earlier,
+       completed iterations are 0 and the cut-off iteration counts as one error only if it stopped short) */
+    CHECK(res.overshoot[0] == 0 && res.overshoot[1] == 0);
+    CHECK(w.status == TFW_ST_IDLE && res.seq_done == n && n < 1000);
+}
+
 int main(void)
 {
     RUN(t_ticks_never_exceed_request); RUN(t_old_floor_rule_would_exceed); RUN(t_ticks_limits); RUN(t_total_count);
@@ -534,6 +616,9 @@ int main(void)
     RUN(t_estop_latch_rules); RUN(t_estop_blocks_run_commands);
     RUN(t_mb_legacy_read_write); RUN(t_mb_legacy_exceptions); RUN(t_mb_coils_and_di);
     RUN(t_mb_window_125_registers_and_writes); RUN(t_mb_no_persist_side_effect); RUN(t_hist_bins);
+    RUN(t_r1_estop_active_at_boot_latches_and_blocks); RUN(t_r1_input_active_blocks_even_when_not_latched);
+    RUN(t_r1_sat_mul_no_wrap); RUN(t_r1_task_mode_reference_period); RUN(t_r1_pin_conflict); RUN(t_r1_max_clients_register);
+    RUN(t_r1_seq_aborted_run_leaves_idle_and_short_seq_done);
     printf("\nchecks=%d failed=%d\n", g_run, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -153,7 +153,7 @@ static void legacy_motion_task(void *arg)
             xSemaphoreGive(s_lock);
         } else if (start) {
             esp_err_t e = ESP_ERR_INVALID_STATE;
-            if (tfw_pulse2_axis_ok(0) && !tfw_estop_latched()) {
+            if (tfw_pulse2_axis_ok(0) && !tfw_estop_blocking() && !(s_hooks.seq_busy && s_hooks.seq_busy())) {     /* M-04: latched or input still active */
                 tfw_pulse2_set_dir(0, fwd);
                 e = tfw_pulse2_move(0, speed, pos, acc, dec);
             }

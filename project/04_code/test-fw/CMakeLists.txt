@@ -1,3 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+# m-07: no errno handling for sqrtf in the inline ISR code (otherwise a flash-resident sqrtf call may be emitted)
+idf_build_set_property(COMPILE_OPTIONS "-fno-math-errno" APPEND)
 project(tfw_p4_pretest)

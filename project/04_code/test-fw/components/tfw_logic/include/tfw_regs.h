@@ -47,6 +47,7 @@
 #define TFW_R_MB_REQ_COUNT    0x7052   /* U32 */
 #define TFW_R_MB_PROC_MAX_US  0x7054   /* U32 */
 #define TFW_R_MB_HIST         0x7056   /* U16 x8, 0x7056..0x705D */
+#define TFW_R_MB_MAX_CLIENTS  0x705E   /* U16 R: build option TFW_MAX_CLIENTS (C-03, added in review round 1) */
 /* TFW-04 */
 #define TFW_R_ES_PATH_SEL     0x7060   /* U16 W: 1 A, 2 B, 3 A+B */
 #define TFW_R_ES_RELEASE      0x7061   /* U16 W: 1 = release */

@@ -80,12 +80,9 @@ uint32_t tfw_load_busy_ms(uint32_t pct, uint32_t period_ms)
 /* ---- emergency stop latch ---- */
 void tfw_es_init(tfw_es_t *e) { e->latched = 0; e->path = 3; e->trip_count = 0; e->snap[0] = e->snap[1] = 0; e->stable_ms = 0; }
 bool tfw_es_path_valid(uint8_t sel) { return sel >= 1 && sel <= 3; }
-void tfw_es_trip(tfw_es_t *e, uint32_t c0, uint32_t c1)
+void tfw_es_boot_check(tfw_es_t *e, bool input_active)
 {
-    e->snap[0] = c0; e->snap[1] = c1;
-    e->latched = 1;
-    e->stable_ms = 0;
-    e->trip_count++;
+    if (input_active && !e->latched) tfw_es_trip(e, 0u, 0u);
 }
 uint16_t tfw_es_state(const tfw_es_t *e, bool input_active)
 {
@@ -110,4 +107,14 @@ unsigned tfw_hist_bin(uint32_t us)
     static const uint32_t lim[7] = {50, 100, 200, 500, 1000, 2000, 5000};
     for (unsigned i = 0; i < 7; ++i) if (us < lim[i]) return i;
     return 7;
+}
+
+bool tfw_pin_conflict(const int *a, size_t na, const int *b, size_t nb)
+{
+    for (size_t i = 0; i < na; ++i) {
+        if (a[i] < 0) continue;
+        for (size_t j = i + 1; j < na; ++j) if (a[j] == a[i]) return true;
+        for (size_t j = 0; j < nb; ++j) if (b[j] == a[i]) return true;
+    }
+    return false;
 }

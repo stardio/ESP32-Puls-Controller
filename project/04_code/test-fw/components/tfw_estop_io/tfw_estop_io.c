@@ -6,6 +6,7 @@
 #include "sdkconfig.h"
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_cpu.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -23,7 +24,8 @@ static mcpwm_oper_handle_t s_oper[2];
 static bool s_bound[2];
 static uint16_t s_bind_ok, s_boot_level, s_last_err;
 static volatile bool s_pending;
-static volatile int64_t s_trip_us;
+static volatile uint32_t s_trip_cyc;      /* CPU cycle counter at trip: esp_timer is not used in the ISR (M-01) */
+static uint32_t s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static uint32_t s_pulses_after[2];
 
 #if CONFIG_TFW_DEBUG_GPIO_ESTOP >= 0
@@ -32,7 +34,9 @@ static uint32_t s_pulses_after[2];
 #define DBG_ESTOP() ((void)0)
 #endif
 
-bool tfw_estop_input_active(void)
+void tfw_estop_set_cpu_mhz(uint32_t mhz) { if (mhz) s_cpu_mhz = mhz; }
+
+bool IRAM_ATTR tfw_estop_input_active(void)
 {
     if (s_gpio < 0) return false;
     return gpio_get_level((gpio_num_t)s_gpio) == (s_active_low ? 0 : 1);
@@ -48,8 +52,8 @@ static void IRAM_ATTR es_isr(void *arg)
         tfw_pulse2_stop(1);
     }
     if (!s_es.latched) {
-        tfw_es_trip(&s_es, c0, c1);
-        s_trip_us = esp_timer_get_time();
+        tfw_es_trip(&s_es, c0, c1);                /* always_inline: part of this IRAM function (M-01) */
+        s_trip_cyc = esp_cpu_get_cycle_count();
         s_pending = true;
     }
 }
@@ -59,7 +63,7 @@ static void es_task(void *arg)
     (void)arg;
     for (;;) {
         tfw_es_input_sample(&s_es, tfw_estop_input_active(), 1);
-        if (s_pending && (esp_timer_get_time() - s_trip_us) >= 10000) {
+        if (s_pending && (uint32_t)((esp_cpu_get_cycle_count() - s_trip_cyc) / s_cpu_mhz) >= 10000u) {
             for (uint8_t i = 0; i < 2; ++i) s_pulses_after[i] = tfw_es_pulses_after(s_es.snap[i], tfw_pulse2_count(i));
             tfw_pulse2_stop(0);                /* clean-up for path B-only: output was braked, timers still run */
             tfw_pulse2_stop(1);
@@ -127,7 +131,16 @@ esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
     };
     esp_err_t e = gpio_config(&in);
     if (e != ESP_OK) { s_last_err = (uint16_t)e; return e; }
-    e = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    /* M-01: the IRAM flag is used only in the IRAM-safe build. The iram_off build installs a normal ISR so that
+     * the comparison of T-06 does not run an IRAM-flagged ISR that calls flash-resident driver code.
+     * M-03: the e-stop ISR gets the highest level of the three ISRs (Kconfig TFW_IRQ_PRIO_*). */
+    int flags = (CONFIG_TFW_IRQ_PRIO_ESTOP == 3) ? ESP_INTR_FLAG_LEVEL3 : (CONFIG_TFW_IRQ_PRIO_ESTOP == 2) ? ESP_INTR_FLAG_LEVEL2 :
+            (CONFIG_TFW_IRQ_PRIO_ESTOP == 1) ? ESP_INTR_FLAG_LEVEL1 : 0;
+#if CONFIG_PCNT_ISR_IRAM_SAFE
+    flags |= ESP_INTR_FLAG_IRAM;
+#endif
+    e = gpio_install_isr_service(flags);
+    if (e == ESP_ERR_INVALID_STATE) ESP_LOGW(TAG, "GPIO ISR service already installed: requested level/IRAM flags NOT applied");
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) { s_last_err = (uint16_t)e; return e; }
     e = gpio_isr_handler_add((gpio_num_t)gpio, es_isr, NULL);
     if (e != ESP_OK) { s_last_err = (uint16_t)e; return e; }
@@ -136,6 +149,11 @@ esp_err_t tfw_estop_init(int gpio, bool active_low, mcpwm_oper_handle_t oper[2])
     gpio_config(&dbg);
 #endif
     s_boot_level = (uint16_t)gpio_get_level((gpio_num_t)gpio);
+    /* M-04: an input that is already active at boot latches immediately (no edge will ever come) */
+    tfw_es_boot_check(&s_es, tfw_estop_input_active());
+    if (s_es.latched) ESP_LOGW(TAG, "e-stop input ACTIVE at boot: LATCHED, RUN commands are refused until release");
+    ESP_LOGI(TAG, "e-stop ISR on core %d, level %d, IRAM flag %d", (int)esp_cpu_get_core_id(), CONFIG_TFW_IRQ_PRIO_ESTOP,
+             CONFIG_PCNT_ISR_IRAM_SAFE ? 1 : 0);
     ESP_LOGI(TAG, "GPIO%d level at boot = %u (%s, active %s). bind_ok=%u (0 none,1 g0,2 g1,3 both). "
              "Existing servo1axis code used GPIO18: check the wiring.",
              gpio, (unsigned)s_boot_level, tfw_estop_input_active() ? "ACTIVE (already tripped?)" : "inactive",
@@ -159,6 +177,8 @@ uint16_t tfw_estop_release(void)
 }
 
 bool tfw_estop_latched(void) { return s_es.latched != 0; }
+/* true while latched OR while the input is still active (M-04): the condition to refuse motion */
+bool tfw_estop_blocking(void) { return tfw_es_blocking(&s_es, tfw_estop_input_active()); }
 
 void tfw_estop_stats(tfw_es_stats_t *out)
 {

@@ -16,6 +16,7 @@ static const item_t k_items[] = {
     {TFW_R_MB_CLIENTS, 1, 0}, {TFW_R_MB_LINK_DOWN, 1, 0}, {TFW_R_MB_REQ_COUNT, 2, 0}, {TFW_R_MB_PROC_MAX_US, 2, 0},
     {TFW_R_MB_HIST + 0, 1, 0}, {TFW_R_MB_HIST + 1, 1, 0}, {TFW_R_MB_HIST + 2, 1, 0}, {TFW_R_MB_HIST + 3, 1, 0},
     {TFW_R_MB_HIST + 4, 1, 0}, {TFW_R_MB_HIST + 5, 1, 0}, {TFW_R_MB_HIST + 6, 1, 0}, {TFW_R_MB_HIST + 7, 1, 0},
+    {TFW_R_MB_MAX_CLIENTS, 1, 0},
     {TFW_R_ES_PATH_SEL, 1, 1}, {TFW_R_ES_RELEASE, 1, 1}, {TFW_R_ES_STATE, 1, 0}, {TFW_R_ES_TRIP_COUNT, 1, 0},
     {TFW_R_ES_ISR_LAT, 2, 0}, {TFW_R_ES_PULSES_AX1, 2, 0}, {TFW_R_ES_PULSES_AX2, 2, 0},
     {TFW_R_ES_BIND_OK, 1, 0}, {TFW_R_ES_BOOT_LEVEL, 1, 0}, {TFW_R_ES_LAST_ERR, 1, 0},
@@ -151,6 +152,7 @@ static uint32_t get_value(const tfw_regwin_t *w, const tfw_results_t *r, uint16_
     case TFW_R_LAST_CNT_AX2: return r->last_pcnt[1];
     case TFW_R_MB_CLIENTS: return r->mb_clients;
     case TFW_R_MB_LINK_DOWN: return r->mb_link_down;
+    case TFW_R_MB_MAX_CLIENTS: return r->mb_max_clients;
     case TFW_R_MB_REQ_COUNT: return r->mb_req_count;
     case TFW_R_MB_PROC_MAX_US: return r->mb_proc_max_us;
     case TFW_R_ES_PATH_SEL: return w->es_path_sel;

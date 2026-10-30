@@ -18,6 +18,7 @@ typedef struct {
     void (*get_results)(void *user, tfw_results_t *out);     /* called under the Modbus lock */
     void (*on_effect)(void *user, const tfw_wr_effect_t *fx); /* called after the lock is released */
     void *user;
+    bool (*seq_busy)(void);                                   /* m-03: legacy START is refused while the sequencer runs */
 } tfw_mb_hooks_t;
 
 void      tfw_modbus_set_hooks(const tfw_mb_hooks_t *hooks);   /* before start */

@@ -26,7 +26,9 @@ static const char *TAG = "TFW_MAIN";
 
 static tfw_regwin_t g_win;
 static volatile tfw_results_t g_res;
-static TaskHandle_t s_seq_task;
+static TaskHandle_t s_seq_task, s_nvs_task;
+static SemaphoreHandle_t s_cmd_lock;            /* m-03: serialises command handling of all Modbus client tasks */
+static volatile bool s_nvs_clear_req;           /* m-09: the NVS task clears its own counters */
 static volatile bool s_seq_running, s_abort;
 static volatile uint16_t s_seq_cmd;
 static uint32_t s_cpu_mhz;
@@ -89,6 +91,7 @@ void tfw_get_results(tfw_results_t *out)
     tfw_estop_stats(&es);
     out->es_state = es.state; out->es_trip_count = es.trip_count; out->es_isr_lat_ns = es.isr_lat_ns;
     out->es_pulses_after[0] = es.pulses_after[0]; out->es_pulses_after[1] = es.pulses_after[1];
+    out->mb_max_clients = CONFIG_TFW_MAX_CLIENTS;
     out->es_bind_ok = es.bind_ok; out->es_boot_level = es.boot_level; out->es_last_err = es.last_err;
 }
 
@@ -96,7 +99,8 @@ static void clear_stats(void)
 {
     g_res.seq_done = 0;
     for (int i = 0; i < 2; ++i) { g_res.err[i] = 0; g_res.overshoot[i] = 0; g_res.last_target[i] = 0; g_res.last_pcnt[i] = 0; }
-    g_res.nvs_writes = 0; g_res.nvs_max_ms = 0;
+    s_nvs_clear_req = true;                          /* m-09: nvs_writes/nvs_max_ms are cleared by their single writer */
+    if (s_nvs_task) xTaskNotifyGive(s_nvs_task);
     tfw_pulse2_clear_stats();
     tfw_modbus_clear_stats();
 }
@@ -111,7 +115,7 @@ static uint32_t hw_count(void *c, uint8_t ax) { (void)c; return tfw_pulse2_count
 static void hw_stop(void *c, uint8_t ax) { (void)c; tfw_pulse2_stop(ax); }
 static void hw_delay(void *c, uint32_t ms) { (void)c; vTaskDelay(pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1); }
 static uint32_t hw_now(void *c) { (void)c; return (uint32_t)(esp_timer_get_time() / 1000); }
-static bool hw_aborted(void *c) { (void)c; return s_abort || tfw_estop_latched(); }
+static bool hw_aborted(void *c) { (void)c; return s_abort || tfw_estop_blocking(); }
 
 static void seq_task(void *arg)
 {
@@ -129,9 +133,10 @@ static void seq_task(void *arg)
     }
 }
 
-uint16_t tfw_handle_cmd(uint16_t cmd)
+static uint16_t handle_cmd_locked(uint16_t cmd)
 {
-    uint16_t st = tfw_cmd_check(&g_win, cmd, s_seq_running, tfw_estop_latched(), tfw_pulse2_axis_ok(1));
+    /* M-04: refuse while latched OR while the input is still active (also when it was active at boot) */
+    uint16_t st = tfw_cmd_check(&g_win, cmd, s_seq_running, tfw_estop_blocking(), tfw_pulse2_axis_ok(1));
     if (st) { g_win.status = st; return st; }
     switch (cmd) {
     case TFW_CMD_RUN_FIXED: case TFW_CMD_RUN_MOVE: case TFW_CMD_RUN_SEQ:
@@ -149,15 +154,26 @@ uint16_t tfw_handle_cmd(uint16_t cmd)
     return 0;
 }
 
+uint16_t tfw_handle_cmd(uint16_t cmd)
+{
+    if (s_cmd_lock) xSemaphoreTake(s_cmd_lock, portMAX_DELAY);
+    uint16_t r = handle_cmd_locked(cmd);
+    if (s_cmd_lock) xSemaphoreGive(s_cmd_lock);
+    return r;
+}
+
 static void on_effect(void *user, const tfw_wr_effect_t *fx)
 {
     (void)user;
+    if (s_cmd_lock) xSemaphoreTake(s_cmd_lock, portMAX_DELAY);     /* m-03 */
     if (fx->es_path_set) tfw_estop_set_path((uint8_t)g_win.es_path_sel);
     if (fx->es_release) { uint16_t r = tfw_estop_release(); if (r) g_win.status = r; }
     if (fx->cfg_changed) cfg_save();
-    if (fx->cmd) tfw_handle_cmd(fx->cmd);
+    if (fx->cmd) handle_cmd_locked(fx->cmd);
+    if (s_cmd_lock) xSemaphoreGive(s_cmd_lock);
 }
 
+static bool hook_seq_busy(void) { return s_seq_running; }
 static void hook_results(void *user, tfw_results_t *out) { (void)user; tfw_get_results(out); }
 
 /* ------------------------------------------------------------------ load tasks (lowest priority) */
@@ -169,8 +185,9 @@ static void nvs_load_task(void *arg)
     uint8_t blob[32] = {0};
     uint32_t seq = 0;
     for (;;) {
+        if (s_nvs_clear_req) { s_nvs_clear_req = false; g_res.nvs_writes = 0; g_res.nvs_max_ms = 0; }   /* m-09 */
         uint32_t period = g_win.load_nvs_ms;
-        if (!open || period == 0) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        if (!open || period == 0) { ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100)); continue; }
         memcpy(blob, &seq, sizeof(seq)); ++seq;
         int64_t t0 = esp_timer_get_time();
         esp_err_t e = nvs_set_blob(h, "blob", blob, sizeof(blob));
@@ -182,7 +199,7 @@ static void nvs_load_task(void *arg)
         } else {
             ESP_LOGW(TAG, "nvs write failed 0x%x", (unsigned)e);
         }
-        vTaskDelay(pdMS_TO_TICKS(period));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(period));      /* woken early by CLEAR_STATS */
     }
 }
 
@@ -216,6 +233,7 @@ static void pulse_init_task(void *p)         /* runs on the update core so the G
 void app_main(void)
 {
     init_nvs();
+    s_cmd_lock = xSemaphoreCreateMutex();
     tfw_regwin_init(&g_win, BUILD_IRAM ? TFW_CFG_PCNT_IRAM : 0);
     cfg_load();
     memset((void *)&g_res, 0, sizeof(g_res));
@@ -227,6 +245,9 @@ void app_main(void)
     s_cpu_mhz = hz ? hz / 1000000u : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
     g_res.chip_rev = ci.revision;
     g_res.cpu_mhz = (uint16_t)s_cpu_mhz;
+    g_res.mb_max_clients = CONFIG_TFW_MAX_CLIENTS;
+    tfw_pulse2_set_cpu_mhz(s_cpu_mhz);          /* m-02: measured clock, not the Kconfig default */
+    tfw_estop_set_cpu_mhz(s_cpu_mhz);
     const bool core_b = (g_win.cfg_flags & TFW_CFG_CORE_B) != 0;
     s_core_upd = core_b ? 0 : 1;               /* layout A: update core 1, sequencer/COMM core 0 [assumed]; B reversed */
     s_core_comm = core_b ? 1 : 0;
@@ -267,7 +288,8 @@ void app_main(void)
              CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
              CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO, CONFIG_TFW_ESTOP_GPIO,
              CONFIG_TFW_ESTOP_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO);
-    ESP_LOGI(TAG, "legacy NVS-on-write=%d (servo1axis behaviour; default off)", CONFIG_TFW_LEGACY_NVS_ON_WRITE);
+    ESP_LOGI(TAG, "legacy NVS-on-write=%d (servo1axis behaviour; default off); max_clients=%d (reg 0x705E); irq levels estop=%d pcnt=%d gpt=%d",
+             CONFIG_TFW_LEGACY_NVS_ON_WRITE, CONFIG_TFW_MAX_CLIENTS, CONFIG_TFW_IRQ_PRIO_ESTOP, CONFIG_TFW_IRQ_PRIO_PCNT, CONFIG_TFW_IRQ_PRIO_GPT);
 
     tfw_caps_t caps;
     tfw_pulse2_probe_caps(&caps);
@@ -286,7 +308,7 @@ void app_main(void)
     if (!(g_win.cfg_flags & TFW_CFG_BRAKE_USE)) { tfw_estop_set_path(1); g_win.es_path_sel = 1; }
     else g_win.es_path_sel = 3;
 
-    const tfw_mb_hooks_t hooks = {.win = &g_win, .get_results = hook_results, .on_effect = on_effect, .user = NULL};
+    const tfw_mb_hooks_t hooks = {.win = &g_win, .get_results = hook_results, .on_effect = on_effect, .user = NULL, .seq_busy = hook_seq_busy};
     tfw_modbus_set_hooks(&hooks);
     tfw_modbus_set_core(s_core_comm);
     const uint8_t ip[4] = {CONFIG_TFW_IP_A, CONFIG_TFW_IP_B, CONFIG_TFW_IP_C, CONFIG_TFW_IP_D};
@@ -294,7 +316,7 @@ void app_main(void)
     if (ee != ESP_OK) ESP_LOGE(TAG, "tfw_modbus_start failed 0x%x", (unsigned)ee);
 
     xTaskCreatePinnedToCore(seq_task, "tfw_seq", 4096, NULL, 8, &s_seq_task, s_core_comm);
-    xTaskCreate(nvs_load_task, "tfw_nvs", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
+    xTaskCreate(nvs_load_task, "tfw_nvs", 4096, NULL, tskIDLE_PRIORITY + 1, &s_nvs_task);
     xTaskCreatePinnedToCore(cpu_load_task, "tfw_cpu", 2048, NULL, tskIDLE_PRIORITY + 1, NULL, s_core_upd);
 
     ESP_LOGI(TAG, "ready: window 0x7000-0x70FF at %u.%u.%u.%u:%u unit %u", ip[0], ip[1], ip[2], ip[3], CONFIG_TFW_PORT, CONFIG_TFW_UNIT_ID);
