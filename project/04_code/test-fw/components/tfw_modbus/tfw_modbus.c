@@ -223,7 +223,7 @@ static void client_task(void *argument)
         memset(&s_ctx.fx, 0, sizeof(s_ctx.fx));
         xSemaphoreGive(s_lock);
         if (!rl) break;
-        if (s_hooks.on_effect && (fx.cmd || fx.es_path_set || fx.es_release || fx.cfg_changed || fx.load_changed))
+        if (s_hooks.on_effect && (fx.cmd || fx.es_path_set || fx.es_release || fx.cfg_changed || fx.load_changed || fx.t15_hang))
             s_hooks.on_effect(s_hooks.user, &fx);
 #if CONFIG_TFW_LEGACY_NVS_ON_WRITE
         if (s_legacy.dirty) persist_legacy();

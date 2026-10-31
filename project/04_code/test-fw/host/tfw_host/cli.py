@@ -20,6 +20,12 @@ def main(argv=None):
     j = sub.add_parser("judge", help="attach a logic-analyser CSV to an earlier run (PENDING) and judge it")
     j.add_argument("result_json")
     j.add_argument("csv")
+    t = sub.add_parser("t15", help="T-15: inject a CPU stop during output, then read reset evidence (build with TFW_T15_FAULT_INJECT=y)")
+    t.add_argument("--target", default="192.168.0.220:502")
+    t.add_argument("--results", default="results")
+    t.add_argument("--mode", choices=["task", "irqoff"], default="task")
+    t.add_argument("--freq", type=int, default=200000)
+    t.add_argument("--count", type=int, default=40000000)
     p = sub.add_parser("report")
     p.add_argument("results")
     p.add_argument("out")
@@ -32,6 +38,10 @@ def main(argv=None):
                 return step["la_csv"] if os.path.isabs(step["la_csv"]) else os.path.join(step.get("_base_dir", "."), step["la_csv"])
         res = run_scenario(a.scenario, a.target, a.results, capture=hook)
         print(json.dumps({k: [x["verdict"] for x in v] for k, v in res.items()}, ensure_ascii=False, indent=1))
+    elif a.cmd == "t15":
+        from .t15 import run_t15
+        rec = run_t15(a.target, a.results, a.mode, a.freq, a.count)
+        print(json.dumps({k: v for k, v in rec.items() if k != "_path"}, ensure_ascii=False, indent=1), "->", rec["_path"])
     elif a.cmd == "judge":
         rec = judge_file(a.result_json, a.csv)
         print(json.dumps(rec["verdict"], ensure_ascii=False, indent=1))

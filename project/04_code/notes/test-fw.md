@@ -340,3 +340,10 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 
 - 축2 STOP 기본값 GPIO17 → **GPIO8**(DI6, J16), 축2 START GPIO18 → **GPIO7**(DI5, J16). 예약 핀에 7·8·15·16 추가(17개). 디버그 후보는 22만 남음.
 - 시험 기대값 갱신 후 `checks=16629 failed=0`, `274 passed`.
+
+## 12. T-15 CPU 정지 유도 (D-070, 메인 세션)
+
+- Kconfig `TFW_T15_FAULT_INJECT`(기본 n, 시험 빌드에서만 y). 레지스터 0x7070에 0xA501을 쓰면 최고 우선순위 태스크 무한 루프(태스크 워치독), 0xA502를 쓰면 인터럽트 금지 상태 무한 루프(인터럽트 워치독). Modbus 응답이 나가도록 200 ms 뒤 실행한다. 옵션이 n이면 주입은 무시되고 로그만 남긴다.
+- 리셋 증거: 0x7071 = 부팅 시 `esp_reset_reason()`, 0x7072 = 전원 투입 이후 부팅 횟수(RTC no-init).
+- PC 도구: `python3 -m tfw_host.cli t15 --mode task|irqoff [--freq 200000 --count 40000000]` → 운전 시작, 1 s 후 주입, 재접속까지 대기, reset_reason·boot_count 기록(`results/T-15_*.json`, 판정 RECORD). 주입 후 출력 지속 시간·펄스 수·GPIO33 레벨은 로직 분석기로 측정한다.
+- 테스트: `checks=16629 failed=0`, `275 passed`(T-15 도구 모의 장치 시험 1건 추가, 보고서 ID 15개로 갱신, IDF 스텁에 esp_system.h·reset_reason 추가).

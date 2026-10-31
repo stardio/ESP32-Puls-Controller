@@ -24,3 +24,4 @@ steps:
   # NC contact = active HIGH (TFW_ESTOP_ACTIVE_LOW=n) -> LA trigger on the rising edge. Only axis 1 must stop; axis 2 keeps running (axis 2 STOP/START inputs are ignored on the 1-axis carrier, TFW_AX2_IO_PRESENT=n, D-068).
   # latch_probe then tries RUN while latched (expects 0x10)
   - {id: T-07, name: "e-stop during run, latch probe", cmd: RUN_FIXED, axis_mask: 3, freq_hz: 200000, count: 4000000, latch_probe: true, estop_active_low: false, la_trigger_edge: rise, timeout_s: 120}
+  # T-15 (D-070) runs with: python3 -m tfw_host.cli t15 --mode task|irqoff (build with TFW_T15_FAULT_INJECT=y)

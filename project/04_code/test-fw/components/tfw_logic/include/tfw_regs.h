@@ -59,6 +59,12 @@
 #define TFW_R_ES_BIND_OK      0x706A   /* U16 R */
 #define TFW_R_ES_BOOT_LEVEL   0x706B   /* U16 R */
 #define TFW_R_ES_LAST_ERR     0x706C   /* U16 R */
+/* T-15 (D-070): CPU stop injection and reset evidence */
+#define TFW_R_T15_HANG        0x7070   /* U16 W: TFW_T15_MAGIC_TASK = busy loop in a task (task WDT), TFW_T15_MAGIC_IRQOFF = spin with interrupts off (interrupt WDT). Needs TFW_T15_FAULT_INJECT=y */
+#define TFW_R_RESET_REASON    0x7071   /* U16 R: esp_reset_reason() at boot */
+#define TFW_R_BOOT_COUNT      0x7072   /* U16 R: boots since power-on (RTC no-init counter) */
+#define TFW_T15_MAGIC_TASK    0xA501u
+#define TFW_T15_MAGIC_IRQOFF  0xA502u
 
 /* tst_cmd values */
 #define TFW_CMD_RUN_FIXED     1

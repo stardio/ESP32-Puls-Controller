@@ -114,4 +114,13 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
     config TFW_ETM_EXPERIMENT
         bool "Compile the PCNT->MCPWM ETM experiment (not implemented, reports 'not tested')"
         default n
+    config TFW_T15_FAULT_INJECT
+        bool "T-15: allow CPU stop injection via register 0x7070 (test builds only)"
+        default n
+        help
+            D-070 / T-15. When enabled, writing 0xA501 to 0x7070 starts a busy loop in a top-priority task
+            (task watchdog), 0xA502 spins with interrupts disabled (interrupt watchdog). Pulses already
+            running keep coming from MCPWM until the watchdog resets the chip; measure that with the logic
+            analyzer. Never enable in a product build.
+
 endmenu

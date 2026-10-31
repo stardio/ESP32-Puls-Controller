@@ -101,4 +101,11 @@ SemaphoreHandle_t xSemaphoreCreateMutex(void);
 SemaphoreHandle_t xSemaphoreCreateBinary(void);
 BaseType_t xSemaphoreTake(SemaphoreHandle_t s, TickType_t t);
 BaseType_t xSemaphoreGive(SemaphoreHandle_t s);
+
+/* T-15 (D-070) */
+#define RTC_NOINIT_ATTR
+typedef enum { ESP_RST_UNKNOWN = 0, ESP_RST_POWERON = 1, ESP_RST_INT_WDT = 6, ESP_RST_TASK_WDT = 7 } esp_reset_reason_t;
+esp_reset_reason_t esp_reset_reason(void);
+#define portDISABLE_INTERRUPTS() do { } while (0)
+#define configMAX_PRIORITIES 25
 #endif

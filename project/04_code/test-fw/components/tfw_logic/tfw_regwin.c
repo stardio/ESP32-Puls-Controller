@@ -20,6 +20,7 @@ static const item_t k_items[] = {
     {TFW_R_ES_PATH_SEL, 1, 1}, {TFW_R_ES_RELEASE, 1, 1}, {TFW_R_ES_STATE, 1, 0}, {TFW_R_ES_TRIP_COUNT, 1, 0},
     {TFW_R_ES_ISR_LAT, 2, 0}, {TFW_R_ES_PULSES_AX1, 2, 0}, {TFW_R_ES_PULSES_AX2, 2, 0},
     {TFW_R_ES_BIND_OK, 1, 0}, {TFW_R_ES_BOOT_LEVEL, 1, 0}, {TFW_R_ES_LAST_ERR, 1, 0},
+    {TFW_R_T15_HANG, 1, 1}, {TFW_R_RESET_REASON, 1, 0}, {TFW_R_BOOT_COUNT, 1, 0},
 };
 #define N_ITEMS (sizeof(k_items) / sizeof(k_items[0]))
 
@@ -84,6 +85,9 @@ static bool set_value(tfw_regwin_t *w, uint16_t addr, uint32_t v, tfw_wr_effect_
     case TFW_R_ES_RELEASE:
         if (v != 1) return false;
         fx->es_release = true; return true;
+    case TFW_R_T15_HANG:   /* only the two magic values; the build option gate is applied by the firmware */
+        if (v != TFW_T15_MAGIC_TASK && v != TFW_T15_MAGIC_IRQOFF) return false;
+        fx->t15_hang = (uint16_t)v; return true;
     default: return false;
     }
 }
@@ -165,6 +169,9 @@ static uint32_t get_value(const tfw_regwin_t *w, const tfw_results_t *r, uint16_
     case TFW_R_ES_BIND_OK: return r->es_bind_ok;
     case TFW_R_ES_BOOT_LEVEL: return r->es_boot_level;
     case TFW_R_ES_LAST_ERR: return r->es_last_err;
+    case TFW_R_T15_HANG: return 0;
+    case TFW_R_RESET_REASON: return r->reset_reason;
+    case TFW_R_BOOT_COUNT: return r->boot_count;
     default:
         if (a >= TFW_R_MB_HIST && a < TFW_R_MB_HIST + 8) return r->mb_hist[a - TFW_R_MB_HIST];
         return 0;

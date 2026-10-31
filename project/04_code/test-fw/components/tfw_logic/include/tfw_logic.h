@@ -125,6 +125,7 @@ typedef struct {
     uint16_t es_state, es_trip_count;
     uint32_t es_isr_lat_ns, es_pulses_after[2];
     uint16_t es_bind_ok, es_boot_level, es_last_err;
+    uint16_t reset_reason, boot_count;      /* T-15 */
 } tfw_results_t;
 
 /* ---------- test register window ---------- */
@@ -144,6 +145,7 @@ typedef struct {
     uint16_t cmd;            /* 0 = none */
     bool     es_path_set;    /* es_path_sel written (value in win->es_path_sel) */
     bool     es_release;
+    uint16_t t15_hang;                      /* 0 = none, else TFW_T15_MAGIC_* (T-15) */
     bool     cfg_changed;    /* 0x700E/0x7010/0x7012 written: persist for next boot */
     bool     load_changed;   /* 0x700C/0x700D written */
 } tfw_wr_effect_t;

@@ -187,6 +187,37 @@ uint16_t tfw_handle_cmd(uint16_t cmd)
     return r;
 }
 
+
+/* ------------------------------------------------------------------ T-15 CPU stop injection (D-070) */
+#include "esp_system.h"
+static RTC_NOINIT_ATTR uint32_t s_boot_magic, s_boot_count;
+static void t15_record_boot(tfw_results_t *r)
+{
+    if (s_boot_magic != 0x7015B007u || esp_reset_reason() == ESP_RST_POWERON) { s_boot_magic = 0x7015B007u; s_boot_count = 0; }
+    s_boot_count++;
+    r->reset_reason = (uint16_t)esp_reset_reason();
+    r->boot_count = (uint16_t)s_boot_count;
+    ESP_LOGW(TAG, "T-15 evidence: reset_reason=%u boot_count=%u", (unsigned)r->reset_reason, (unsigned)r->boot_count);
+}
+#if CONFIG_TFW_T15_FAULT_INJECT
+static void t15_hang_task(void *arg)
+{
+    const uint16_t mode = (uint16_t)(uintptr_t)arg;
+    vTaskDelay(pdMS_TO_TICKS(200));                /* let the Modbus response leave first */
+    ESP_LOGW(TAG, "T-15: CPU stop injection mode 0x%04x now (pulses keep running in MCPWM until the watchdog fires)", mode);
+    if (mode == TFW_T15_MAGIC_IRQOFF) { portDISABLE_INTERRUPTS(); for (;;) { } }
+    for (;;) { }                                   /* task watchdog */
+}
+#endif
+static void t15_inject(uint16_t mode)
+{
+#if CONFIG_TFW_T15_FAULT_INJECT
+    xTaskCreate(t15_hang_task, "t15_hang", 2048, (void *)(uintptr_t)mode, configMAX_PRIORITIES - 1, NULL);
+#else
+    ESP_LOGW(TAG, "T-15: injection 0x%04x ignored (TFW_T15_FAULT_INJECT=n)", mode);
+#endif
+}
+
 static void on_effect(void *user, const tfw_wr_effect_t *fx)
 {
     (void)user;
@@ -196,6 +227,7 @@ static void on_effect(void *user, const tfw_wr_effect_t *fx)
     if (fx->cfg_changed) cfg_save();
     if (fx->cmd) handle_cmd_locked(fx->cmd);
     if (s_cmd_lock) xSemaphoreGive(s_cmd_lock);
+    if (fx->t15_hang) t15_inject(fx->t15_hang);
 }
 
 static bool hook_seq_busy(void) { return s_seq_running; }
@@ -269,6 +301,7 @@ void app_main(void)
     esp_clk_tree_src_get_freq_hz(SOC_MOD_CLK_CPU, ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED, &hz);
     s_cpu_mhz = hz ? hz / 1000000u : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
     g_res.chip_rev = ci.revision;
+    t15_record_boot((tfw_results_t *)&g_res);
     g_res.cpu_mhz = (uint16_t)s_cpu_mhz;
     g_res.mb_max_clients = CONFIG_TFW_MAX_CLIENTS;
     tfw_pulse2_set_cpu_mhz(s_cpu_mhz);          /* m-02: measured clock, not the Kconfig default */

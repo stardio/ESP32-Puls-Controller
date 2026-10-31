@@ -55,7 +55,7 @@ def test_unreachable_target_is_recorded_not_raised(tmp_path):
     assert res["T-04"][0]["verdict"]["status"] == "FAIL"
 
 
-def test_report_lists_all_14_ids_with_substitutions(tmp_path):
+def test_report_lists_all_15_ids_with_substitutions(tmp_path):
     rd = tmp_path / "results"
     rd.mkdir()
     rec = {"id": "T-04", "name": "x", "target": "t", "time": "now", "step": {},
@@ -68,20 +68,20 @@ def test_report_lists_all_14_ids_with_substitutions(tmp_path):
     txt = out.read_text(encoding="utf-8")
     for tid in ALL_IDS:
         assert f"| {tid} |" in txt, tid
-    assert len(ALL_IDS) == 14
+    assert len(ALL_IDS) == 15          # T-15 added (D-070)
     assert txt.count("기존 실적으로 대체(D-028)") >= 3          # T-01, T-02, T-14 (1축)
     assert "CURRENT_STATE.md" in txt
     assert "abc123" in txt and "iram_on" in txt and "301" in txt
     assert "합격" in txt and "미실시" in txt
 
 
-def test_report_empty_results_still_14_rows(tmp_path):
+def test_report_empty_results_still_15_rows(tmp_path):
     rd = tmp_path / "r"
     rd.mkdir()
     out = tmp_path / "rep.md"
     make_report(str(rd), str(out))
     txt = out.read_text(encoding="utf-8")
-    assert sum(1 for t in ALL_IDS if f"| {t} |" in txt) == 14
+    assert sum(1 for t in ALL_IDS if f"| {t} |" in txt) == 15
 
 
 def _run_data(**kw):
@@ -106,3 +106,39 @@ def test_judge_rules():
     assert judge("T-07", {"relaunch_after_latch": 1, "es_last_err": 0, "es_trip_count_before": 0, "es_trip_count": 1})["status"] == "FAIL"
     assert judge("T-09", dict(ok, cmd="RUN_FIXED", repeat=1, seq_done=1, freq_checked=True, requests_exceeded=[300000]))["status"] == "FAIL"
     assert judge("T-10", {})["status"] == "NOT_RUN"
+
+
+def test_t15_tool_records_reboot_against_a_fake_device(tmp_path, monkeypatch):
+    """T-15 (D-070): the t15 command writes the run window, the magic value, then reads reset evidence after reboot."""
+    from tfw_host import t15 as t15mod
+    writes, state = [], {"boot": 3}
+
+    class FakeClient:
+        def __init__(self, host, port, timeout=2.0):
+            pass
+        def connect(self):
+            return self
+        def close(self):
+            pass
+        def read_holding(self, addr, qty):
+            from tfw_host.regs import R
+            if addr == R["BOOT_COUNT"]:
+                return [state["boot"]]
+            if addr == R["RESET_REASON"]:
+                return [7]
+            return [1]
+        def write_register(self, addr, value):
+            from tfw_host.regs import R
+            writes.append((addr, value))
+            if addr == R["T15_HANG"]:
+                state["boot"] += 1          # simulated watchdog reboot
+        def write_registers(self, addr, values):
+            writes.append((addr, tuple(values)))
+
+    monkeypatch.setattr(t15mod, "ModbusTcpClient", FakeClient)
+    monkeypatch.setattr(t15mod.time, "sleep", lambda s: None)
+    rec = t15mod.run_t15("127.0.0.1:502", str(tmp_path), mode="irqoff")
+    from tfw_host.regs import R, T15_MAGIC
+    assert (R["T15_HANG"], T15_MAGIC["irqoff"]) in writes
+    assert rec["boot_count_after"] == 4 and rec["reset_reason"] == 7
+    assert rec["verdict"]["verdict"] == "RECORD" and "워치독 재부팅" in rec["verdict"]["reasons"][0]
