@@ -112,13 +112,21 @@ static uint32_t hw_count(void *c, uint8_t ax) { (void)c; return tfw_pulse2_count
 static void hw_stop(void *c, uint8_t ax) { (void)c; tfw_pulse2_stop(ax); }
 static void hw_delay(void *c, uint32_t ms) { (void)c; vTaskDelay(pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1); }
 static uint32_t hw_now(void *c) { (void)c; return (uint32_t)(esp_timer_get_time() / 1000); }
-/* A sequence uses the axes of g_win.axis_mask together: it ends when the STOP of any of those axes is active. The hardware
- * STOP itself stays per axis (see tfw_estop_io.c); this only decides when the test sequencer gives up. */
+/* A sequence uses the axes of g_win.axis_mask together. It gives up only when the STOP of every axis in the mask is active,
+ * so a STOP on one axis stops that axis alone and the other axis keeps running (review V4-01: T-07 measures axis independence).
+ * The stopped axis is then judged as short of its target. */
+static bool mask_all_blocked(uint16_t mask)
+{
+    const bool use0 = (mask & 1u) != 0u, use1 = (mask & 2u) != 0u;
+    if (!use0 && !use1) return false;
+    return (!use0 || tfw_estop_blocking_axis(0)) && (!use1 || tfw_estop_blocking_axis(1));
+}
+/* Command refusal stays conservative: a command is refused (0x10) when the STOP of any axis in the mask is active. */
 static bool mask_blocked(uint16_t mask)
 {
     return ((mask & 1u) && tfw_estop_blocking_axis(0)) || ((mask & 2u) && tfw_estop_blocking_axis(1));
 }
-static bool hw_aborted(void *c) { (void)c; return s_abort || mask_blocked(g_win.axis_mask); }
+static bool hw_aborted(void *c) { (void)c; return s_abort || mask_all_blocked(g_win.axis_mask); }
 
 /* START edge (baseline v0.4 sec.3): starts that axis with the current window freq/count (fixed frequency run).
  * Called by the estop watch task only for accepted edges (STOP not active). Ignored while a sequence is running. */
