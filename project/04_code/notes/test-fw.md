@@ -144,18 +144,49 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 
 전제: ESP-IDF 5.5.3 설치, Waveshare ESP32-P4-ETH 보드, 로직 분석기(4채널 이상, 최소 10 MS/s [가정]), 스위칭 허브. 기존 IP101 배선(192.168.0.220)과 기존 HMI 연결을 그대로 쓴다.
 
-1. **준비**: `cd project/04_code/test-fw && idf.py set-target esp32p4`. `idf.py menuconfig` → "TFW test firmware"에서 **축2 핀(`TFW_AX2_*`, 2회차부터 기본값 -1 = 축2 생성 안 함, 반드시 지정), 비상정지 극성, 디버그 GPIO, 최대 접속 수, probe 핀(기본 -1 = probe 생략)**을 실제 배선에 맞춘다. 축2 핀이 보드 내부 사용 핀(EMAC/RMII 등, 미확인 PS-27)과 겹치면 안 된다. 부팅 시 코드가 축1·축2·비상정지·디버그·probe·기존 코드 사용 핀(PHY 리셋 51, 서보 출력 23/26/27/46)과의 중복만 검사한다.
+0. **배선 기준 (D-067, D-068, 기준선 v0.4)**: 지금은 **1축 캐리어 + P4 보드**만 있다. 축2는 캐리어 축2 부품(U16, J14, DI3/DI4, DO2) 없이 **P4 보드 헤더의 GPIO20(펄스)·GPIO21(방향)을 로직 분석기로 직접 측정**한다. 이 방식으로 T-03·T-04·T-05·T-06·T-08·T-09(2축 MCU 성능)를 진행한다. **T-14(2축 실모터)와 축2 출력단(U16/AM26C31/J14) 시험은 ⑤단계로 넘긴다.**
+   - 축1: 펄스 25, 방향 32 → 캐리어 J4. STOP = GPIO19 (DI2, J15), START = GPIO54 (DI1). 서보 ON DO1 = GPIO23.
+   - 축2: 펄스 20, 방향 21(헤더에서 측정). `TFW_AX2_IO_PRESENT`=n(기본)이면 축2 STOP(GPIO17)·START(GPIO18)를 **읽지도 않고 무시**한다(NC 극성에서 들뜬 입력이 "항상 정지"를 만드는 것을 막기 위함). 축2는 Modbus/호스트 명령으로만 구동한다.
+   - 두 축 공용 펄스 출력 인에이블 = GPIO33(HIGH = 허용). 부팅 중 LOW, 축 생성 후 HIGH로 올리고 STOP은 건드리지 않는다. 1축 캐리어에서 GPIO33은 TLP2361 → AM26C31 /G로 가는 선이다.
+   - STOP 접점은 NC(`TFW_ESTOP_ACTIVE_LOW`=n, 활성 HIGH). START는 `TFW_START_ACTIVE_LOW`=y [권고, 접점 닫힘 → TLP293 ON → GPIO LOW 가정, 보드 미검증]. 부팅 로그에서 STOP이 "inactive"로 나오는지 먼저 확인하고, "ACTIVE"면 극성을 반대로 바꾼다.
+   - 2축 캐리어가 준비되면 `TFW_AX2_IO_PRESENT`=y로 켜고 GPIO17(DI4)·GPIO18(DI3)을 배선한다.
+1. **준비**: `cd project/04_code/test-fw && idf.py set-target esp32p4`. `idf.py menuconfig` → "TFW test firmware"에서 **STOP 극성, 디버그 GPIO, 최대 접속 수, probe 핀(기본 -1 = probe 생략)**을 확인한다. 축 핀 기본값은 이미 v0.4 값(25/32, 20/21, OE 33)이다. 부팅 시 코드가 축 핀을 예약 목록(17·18·19·54 DI, 23·26·27·46 DO, 24·47·48 RS-485, 33 OE, 51 PHY 리셋)·STOP/START·디버그 핀과 대조해 겹치면 해당 축을 만들지 않는다. EMAC/RMII 핀과의 겹침은 미확인(PS-27)이다. F-14(USB 콘솔 핀이 GPIO24/25와 겹치지 않는지)는 보드 결선 확인이 필요해서 코드를 바꾸지 않았다.
 2. **빌드(IRAM on/off 두 벌)**:
    - `idf.py -B build_on -D SDKCONFIG=sdkconfig.on -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.tfw_iram_on" build`
    - `idf.py -B build_off -D SDKCONFIG=sdkconfig.off -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.tfw_iram_off" build`
    - 컴파일 오류가 나면 §6 위험 목록의 API부터 확인하고 결과를 coder에게 알린다.
 3. **옵션 확인**: `grep -E "PCNT_ISR_IRAM_SAFE|MCPWM_ISR_IRAM_SAFE|GPTIMER_ISR_IRAM_SAFE|CTRL_FUNC_IN_IRAM" sdkconfig.on sdkconfig.off`로 on 쪽이 `=y`인지 확인(이름이 틀리면 조용히 무시될 수 있다). `tools/check_iram.sh build_on/tfw_p4_pretest.elf`로 ISR 경로 점검.
-4. **플래시·모니터** (사용자 실행): `idf.py -B build_on -p <PORT> flash monitor`. 부팅 로그에서 칩 리비전, CPU 클록, 해상도·갱신 주기, IRAM 옵션, 핀 배정, `CAPS ...`(그룹 1, 제너레이터 2, PCNT 채널 2, max_period_ticks), `bind_ok`, GPIO19 부팅 레벨을 기록한다. 축2 실패 시 `AXIS 2 UNAVAILABLE`과 오류 코드가 나온다.
+4. **플래시·모니터** (사용자 실행): `idf.py -B build_on -p <PORT> flash monitor`. 부팅 로그에서 칩 리비전, CPU 클록, 해상도·갱신 주기, IRAM 옵션, 핀 배정, `CAPS ...`(그룹 1, 제너레이터 2, PCNT 채널 2, max_period_ticks), `bind_ok`, STOP 부팅 레벨("GPIO19 = DI2(J15)" 줄, 축2 입력은 비활성이면 "STOP axis 2" 줄에 -1)과 "pulse output enable GPIO33 = 1" 줄을 기록한다. 축2 실패 시 `AXIS 2 UNAVAILABLE`과 오류 코드가 나온다.
 5. **PC 도구**: `cd test-fw/host && python3 -m tfw_host.cli run scenario_example.yaml --target 192.168.0.220:502 --results results` 후 `python3 -m tfw_host.cli report results reports/report_G3_pretest.md`. `results/meta.json`에 빌드 해시·sdkconfig 차이·장비를 직접 적는다. 로직 분석기 채널 이름은 CSV 헤더와 시나리오의 `la_pulse_channels`/`la_trigger_channel`을 맞춘다.
 6. **T-05**: `TFW_MAX_CLIENTS=8`로 따로 빌드(제어 연결 + 부하 4 + HMI). 5번째 접속 거부 확인(TFW-03 #4)은 기본값 4 빌드로 한다.
 6a. **M-05 (정지 후 첫 주기)**: 시나리오의 T-09 세 단계(1 MHz -> 5 kHz -> 1 MHz)는 **단계마다 별도 캡처 파일**을 쓴다. 캡처를 시작한 뒤 `run`(또는 `--wait-capture`)을 실행하고, 운전이 끝나면 캡처를 멈춰 내보낸다. `run`은 LA CSV가 필요한 단계를 PENDING으로 남기므로 `python3 -m tfw_host.cli judge results/<T-ID>_<시각>_<n>.json <캡처.csv>`로 판정한다(CSV 수정 시각이 운전 종료 이후이고, 길이가 운전 시간 - 0.5 s [가정] 이상이며, 같은 파일을 다른 실행에 쓰지 않아야 한다). 5 kHz 단계는 첫 3주기가 200 us ± LA 2샘플이어야 하고, 1 MHz로 돌아오는 단계는 첫 3주기가 1 us ± 2샘플이어야 한다(긴 쪽·짧은 쪽 모두 FAIL).
 6b. **M-02 확인 (리뷰 2차 §3-1 조건 2·3)**: HWTIMER 모드 첫 이동 전에 (a) IDF 5.5 문서 "FreeRTOS (IDF) - Floating Point Usage"에서 ESP32-P4 항목(ISR 안 FPU 허용 여부)을 확인해 결과를 보고서에 적거나, (b) HWTIMER 운전 중 별도 태스크에서 float 검사합을 계속 계산해 불일치 0을 확인한다(태스크 FPU 레지스터 손상은 패닉 없이 조용히 틀리므로 "1회 이동에 패닉 없음"만으로는 부족하다). 불일치가 나오거나 (a)가 금지이면 `CONFIG_TFW_UPD_MODE_HWTIMER=n`(TASK 모드)로 비교한다. 이제 이 TASK 모드 빌드도 컴파일된다(N-01 수정).
-7. **T-07**: GPIO19를 수동 스위치 또는 별도 디지털 출력으로 구동하고 `es_path_sel`(0x7060)로 경로를 바꾼다. 해제는 0x7061에 1.
+7. **T-07 (F-12)**: J15 DI2 단자에 24 V 스위치를 NC 접점으로 연결하고(평시 닫힘), 운전 중에 **개방**해 STOP을 건다. 활성 HIGH이므로 LA 트리거는 상승 엣지다. 축1만 멈추고 축2는 계속 나가야 한다(축별 차단, GPIO33 유지). `es_path_sel`(0x7060)로 경로를 바꾼다. 해제는 0x7061에 1 또는 STOP 해제 후 START 엣지(GPIO54). 축2 STOP 시험은 2축 캐리어(⑤단계)에서 한다.
+7a. **START 엣지**: 축1 GPIO54를 접점으로 한 번 누르면 창 레지스터의 freq/count로 고정 주파수 운전이 시작된다(5 ms 안정 후 판정). STOP 활성 중 누른 START는 무시되고, 누른 채로 STOP이 풀려도 재기동하지 않는다(새 엣지 필요).
+
+## 4a. 기준선 v0.4 반영 (D-067, D-068, F-01~F-14)
+
+| ID | 반영 |
+|---|---|
+| F-01, F-02 | `TFW_AX2_PLS_GPIO`=20, `TFW_AX2_DIR_GPIO`=21 |
+| F-03~F-05 | 축별 EN(`TFW_AX1_EN_GPIO`, `TFW_AX2_EN_GPIO`) 삭제. `TFW_PULSE_OE_GPIO`=33, `TFW_PULSE_OE_ACTIVE_LOW`=n. 부팅·초기화 실패 시 LOW, 축 생성 후 HIGH. STOP은 건드리지 않음 |
+| F-06, F-07 | STOP 축1 GPIO19(`TFW_ESTOP_GPIO`), 축2 GPIO17(`TFW_ESTOP2_GPIO`), `TFW_ESTOP_ACTIVE_LOW`=n. 축마다 ISR·래치·MCPWM 폴트(그룹 g = 축 g)가 따로 있어 STOP은 해당 축만 LOW로 고정 |
+| 추가 | START 엣지 입력 GPIO54/18, 5 ms 안정 후 판정(`tfw_start_sample`), STOP 입력 활성 중 무시, 부팅 시 이미 눌린 START는 엣지 아님 |
+| F-08 | 예약 목록 `tfw_reserved_pins`(13개)를 축 핀·probe 핀 충돌 검사에 사용 |
+| F-09 | 서보 ON: DO1=23, DO2=26, DO3(27)·DO4(46)은 항상 OFF. HMI 서보 코일은 DO1·DO2를 함께 켠다 [권고] |
+| F-10 | 부팅 로그 "GPIO19 = DI2(J15)" |
+| F-11, F-13 | 변경 없음(디버그 핀 -1) |
+| F-14 | 미반영(보드 결선 확인 필요) |
+| D-068 | `TFW_AX2_IO_PRESENT`=n(기본): 축2 STOP/START 입력을 구성·판독하지 않음, 축2는 명령으로만 구동 |
+
+권고 기본값 판단: (1) START 시작 조건은 창 레지스터의 freq/count로 `run_fixed` 한다(설계서에 START 파라미터 정의가 없음). (2) STOP 해제 후 래치가 남은 축은 START 엣지가 해제(10 ms 안정 조건 포함)와 시작을 함께 한다(기준선 §3 "해제 후 START 엣지로만 재기동"). Modbus RUN은 래치 중 계속 0x10으로 거부한다(T-07 래치 시험 유지). (3) `es_state`·`es_trip_count`는 두 축의 최댓값·합이고 `es_boot_level`은 bit0 = 축1, bit1 = 축2다(레지스터 맵 변경 없음). (4) START 극성은 활성 LOW(TLP293 ON → LOW 가정).
+
+### 테스트 결과 (2026-10-31 실행, 컨테이너, ESP-IDF 없음)
+
+- `make -C project/04_code/tests/test-fw run`: `checks=16629 failed=0` (v0.4 추가 8건 PASS: OE 레벨, 서보 ON 출력, 예약 핀, START 엣지·바운스·STOP 중 무시·부팅 시 눌림, 축별 래치).
+- `python3 -m pytest -q` (같은 폴더): `274 passed in 39.71s`. 호스트 빌드 estop 시험에 축별 STOP 독립성(다른 축 정지 호출 없음, GPIO33 쓰기 0), 축별 해제, START 엣지 판정, STOP 중 START 무시 후 새 엣지 필요, 축2 입력 없음(D-068), 부팅 레벨 보고를 추가했고 `ax2_io`·`active_low`·`oe_active_low` 옵션 조합 컴파일을 추가했다.
+- 기존 시험 중 단일 STOP 전제였던 정적 시험 일부(`tfw_estop_blocking()`, `tfw_pulse2_stop(0)`, `AX2_EN` 기본 -1)는 새 동작에 맞게 수정했다. 삭제한 시험은 없다.
+- 확인하지 못한 것: tfw_pulse2.c·tfw_modbus.c는 호스트에서 컴파일하지 않았다(IDF 스텁 없음, 정적 문자열 검사만). ESP-IDF 빌드, 실제 ISR 지연, 극성, 축별 MCPWM 폴트 동작은 모두 실측 전이다.
 
 ## 5. 설계와 다른 점
 
@@ -180,6 +211,11 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 `mcpwm_timer_config_t.flags.update_period_on_empty` 필드명, `mcpwm_gpio_fault_config_t`(`flags.active_level/pull_up/pull_down`), `mcpwm_brake_config_t`, `MCPWM_GEN_BRAKE_EVENT_ACTION` 매크로, `mcpwm_operator_recover_from_fault`, `mcpwm_new_generator`에 `gen_gpio_num = -1`(probe의 제너레이터 2 시험), `pcnt_new_channel`에 `edge_gpio_num = -1`(probe의 PCNT 채널 2 시험), `esp_clk_tree_src_get_freq_hz`의 인자, `esp_chip_info_t.revision`의 값 의미(예: 301 = v3.1), GPTimer 콜백에서 MCPWM/PCNT 제어 함수 호출 가능 여부. probe의 `-1` 사용이 실패해도 오류 코드(`err_gen2`, `err_pcnt_ch2`)가 로그에 남으므로, 그 코드가 핀 인자 때문인지 자원 부족 때문인지 구분해서 읽어야 한다.
 
 ## 7. 이슈 제기
+
+- (v0.4) 시험 시퀀서(RUN_SEQ 등)는 `axis_mask`의 축 중 하나라도 STOP이면 시퀀스를 끝내고 시작한 축을 소프트웨어로 정지한다. 하드웨어 STOP은 축별이지만 시퀀서 단위 시험에서는 두 축이 함께 멈출 수 있다. T-07은 시퀀서가 아닌 ISR 시점의 축별 정지를 LA로 봐야 한다.
+- (v0.4) START 시 사용할 속도·개수의 설계 정의가 없어 창 레지스터 값을 쓴다. 설계 확정 필요.
+- (v0.4) F-14 USB 콘솔 핀 확인은 보드 결선 정보가 필요해 미반영.
+- (v0.4) 레거시 코일의 서보 ON이 DO1·DO2를 함께 켠다. 축별 서보 ON 제어가 필요하면 설계 확정 필요.
 
 1. **(설계 모순) T-05 접속 수**: T-05는 부하 클라이언트 4개 + 실제 HMI 1대 + 제어 연결(총 6)을 요구하지만 TFW-03은 최대 접속 4이고 5번째 거부가 완료 기준이다. 제품 `max_clients` 기본 4 [가정](interface-spec §5.3)의 의미(HMI 포함 여부)도 결정이 필요하다. 시험 펌웨어는 Kconfig로 우회했다.
 2. **(설계 모호) `tst_count` 축별 입력 / 0x7040 영역 충돌**: §5의 9번.

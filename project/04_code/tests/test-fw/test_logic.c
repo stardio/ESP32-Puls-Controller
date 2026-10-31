@@ -593,6 +593,87 @@ TEST(t_r1_pin_conflict)                                 /* M-08 */
     const int taken[] = {2, 3, 4};
     CHECK(tfw_pin_conflict(&probe_vs_pls, 1, taken, 3));                        /* old default: probe pin 2 == axis 2 pulse pin 2 */
 }
+/* ===== baseline v0.4 (D-067): shared pulse OE, START edge, reserved pins, servo ON outputs ===== */
+TEST(t_v04_oe_level_high_means_allow)                    /* F-03: TFW_PULSE_OE_ACTIVE_LOW = n */
+{
+    CHECK(tfw_oe_level(true, false) == 1);
+    CHECK(tfw_oe_level(false, false) == 0);              /* boot / failure: forbidden = LOW (pull-down state) */
+    CHECK(tfw_oe_level(true, true) == 0);
+    CHECK(tfw_oe_level(false, true) == 1);
+}
+TEST(t_v04_servo_on_outputs)                             /* F-09 */
+{
+    tfw_servo_do_t d = tfw_servo_do(true, true);
+    CHECK(d.do1 == 1 && d.do2 == 1 && d.do3 == 0 && d.do4 == 0);
+    d = tfw_servo_do(true, false); CHECK(d.do1 == 1 && d.do2 == 0 && d.do3 == 0 && d.do4 == 0);
+    d = tfw_servo_do(false, true); CHECK(d.do1 == 0 && d.do2 == 1);
+    d = tfw_servo_do(false, false); CHECK(!d.do1 && !d.do2 && !d.do3 && !d.do4);
+}
+TEST(t_v04_reserved_pins_and_default_axis_pins)          /* F-08, F-01, F-02 */
+{
+    const int must[] = {17, 18, 19, 54, 23, 26, 27, 46, 24, 47, 48, 33, 51};
+    for (unsigned i = 0; i < sizeof must / sizeof must[0]; ++i) {
+        int found = 0;
+        for (unsigned j = 0; j < TFW_RESERVED_PIN_COUNT; ++j) if (tfw_reserved_pins[j] == must[i]) found = 1;
+        CHECK(found);
+    }
+    const int ax1[2] = {25, 32}, ax2[2] = {20, 21};
+    CHECK(!tfw_pin_conflict(ax1, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
+    CHECK(!tfw_pin_conflict(ax2, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
+    const int old_en[2] = {25, 33}, dup_di[2] = {20, 18};
+    CHECK(tfw_pin_conflict(old_en, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));   /* 33 is the OE now, not an axis EN */
+    CHECK(tfw_pin_conflict(dup_di, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
+    const int dbg[3] = {15, 16, 22};                                                 /* F-11 candidates are free */
+    CHECK(!tfw_pin_conflict(dbg, 3, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
+}
+TEST(t_v04_start_edge_debounced_once)
+{
+    tfw_start_t s; tfw_start_init(&s, false);
+    int edges = 0;
+    for (int i = 0; i < 3; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);   /* 3 ms: not yet */
+    CHECK(edges == 0);
+    for (int i = 0; i < 10; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);
+    CHECK(edges == 1);
+    for (int i = 0; i < 100; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);  /* level held */
+    CHECK(edges == 1);
+    for (int i = 0; i < 10; ++i) edges += tfw_start_sample(&s, false, false, 1, 5);  /* falling edge */
+    CHECK(edges == 1);
+}
+TEST(t_v04_start_bounce_is_rejected)
+{
+    tfw_start_t s; tfw_start_init(&s, false);
+    int edges = 0;
+    for (int i = 0; i < 50; ++i) edges += tfw_start_sample(&s, (i % 3) == 0, false, 1, 5);   /* chatter < 5 ms */
+    CHECK(edges == 0);
+}
+TEST(t_v04_start_ignored_while_stop_active)
+{
+    tfw_start_t s; tfw_start_init(&s, false);
+    int edges = 0;
+    for (int i = 0; i < 20; ++i) edges += tfw_start_sample(&s, true, true, 1, 5);    /* START pressed during STOP */
+    CHECK(edges == 0);
+    for (int i = 0; i < 20; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);   /* STOP gone, START still held */
+    CHECK(edges == 0);                                                               /* the edge was consumed: no restart */
+    for (int i = 0; i < 10; ++i) edges += tfw_start_sample(&s, false, false, 1, 5);
+    for (int i = 0; i < 10; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);
+    CHECK(edges == 1);                                                               /* new edge restarts */
+}
+TEST(t_v04_start_held_at_boot_is_not_an_edge)
+{
+    tfw_start_t s; tfw_start_init(&s, true);
+    int edges = 0;
+    for (int i = 0; i < 50; ++i) edges += tfw_start_sample(&s, true, false, 1, 5);
+    CHECK(edges == 0);
+}
+TEST(t_v04_per_axis_latch_is_independent)                /* tfw_es_t is one instance per axis */
+{
+    tfw_es_t a, b; tfw_es_init(&a); tfw_es_init(&b);
+    tfw_es_trip(&a, 10, 20);
+    CHECK(tfw_es_blocking(&a, false) && !tfw_es_blocking(&b, false));
+    tfw_es_input_sample(&a, false, 20);
+    CHECK(tfw_es_release(&a, false) == 0 && !tfw_es_blocking(&a, false));
+    CHECK(!tfw_es_blocking(&b, false));
+}
 TEST(t_r1_max_clients_register)                         /* C-03 */
 {
     tfw_regwin_t w; tfw_results_t r; memset(&r, 0, sizeof r); tfw_regwin_init(&w, 0);
@@ -660,7 +741,10 @@ int main(void)
     RUN(t_mb_legacy_read_write); RUN(t_mb_legacy_exceptions); RUN(t_mb_coils_and_di);
     RUN(t_mb_window_125_registers_and_writes); RUN(t_mb_no_persist_side_effect); RUN(t_hist_bins);
     RUN(t_r1_estop_active_at_boot_latches_and_blocks); RUN(t_r1_input_active_blocks_even_when_not_latched);
-    RUN(t_r1_sat_mul_no_wrap); RUN(t_r1_task_mode_reference_period); RUN(t_r1_pin_conflict); RUN(t_r1_max_clients_register);
+    RUN(t_r1_sat_mul_no_wrap); RUN(t_r1_task_mode_reference_period); RUN(t_r1_pin_conflict);
+    RUN(t_v04_oe_level_high_means_allow); RUN(t_v04_servo_on_outputs); RUN(t_v04_reserved_pins_and_default_axis_pins);
+    RUN(t_v04_start_edge_debounced_once); RUN(t_v04_start_bounce_is_rejected); RUN(t_v04_start_ignored_while_stop_active);
+    RUN(t_v04_start_held_at_boot_is_not_an_edge); RUN(t_v04_per_axis_latch_is_independent); RUN(t_r1_max_clients_register);
     RUN(t_r1_seq_aborted_run_leaves_idle_and_short_seq_done);
     RUN(t_r2_seq_no_move_after_trip_between_iterations); RUN(t_r2_seq_no_second_axis_start_after_trip);
     RUN(t_r2_seq_start_refused_by_trip_is_abort_not_pulse_error);

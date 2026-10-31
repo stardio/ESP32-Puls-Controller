@@ -32,7 +32,7 @@
 
 static const char *TAG = "TFW_MODBUS";
 
-#define SERVO_OUTPUT_MASK ((1ULL << GPIO_NUM_23) | (1ULL << GPIO_NUM_26) | (1ULL << GPIO_NUM_27) | (1ULL << GPIO_NUM_46))
+#define SERVO_OUTPUT_MASK ((1ULL << GPIO_NUM_23) | (1ULL << GPIO_NUM_26) | (1ULL << GPIO_NUM_27) | (1ULL << GPIO_NUM_46))   /* DO1..DO4 */
 
 static SemaphoreHandle_t s_lock;
 static tfw_legacy_t s_legacy;
@@ -86,9 +86,10 @@ void tfw_modbus_clear_stats(void)
 /* ---------------------------------------------------------------- legacy servo outputs and persistence */
 static void set_servo_outputs(bool on)
 {
-    uint32_t lv = on ? 1u : 0u;
-    gpio_set_level(GPIO_NUM_23, lv); gpio_set_level(GPIO_NUM_26, lv);
-    gpio_set_level(GPIO_NUM_27, lv); gpio_set_level(GPIO_NUM_46, lv);
+    /* F-09: DO1 (23) = axis 1, DO2 (26) = axis 2, DO3 (27) / DO4 (46) always off. The legacy HMI servo coil switches both axes. */
+    const tfw_servo_do_t d = tfw_servo_do(on, on);
+    gpio_set_level(GPIO_NUM_23, d.do1); gpio_set_level(GPIO_NUM_26, d.do2);
+    gpio_set_level(GPIO_NUM_27, d.do3); gpio_set_level(GPIO_NUM_46, d.do4);
 }
 
 #if CONFIG_TFW_LEGACY_NVS_ON_WRITE
@@ -153,7 +154,7 @@ static void legacy_motion_task(void *arg)
             xSemaphoreGive(s_lock);
         } else if (start) {
             esp_err_t e = ESP_ERR_INVALID_STATE;
-            if (tfw_pulse2_axis_ok(0) && !tfw_estop_blocking() && !(s_hooks.seq_busy && s_hooks.seq_busy())) {     /* M-04: latched or input still active */
+            if (tfw_pulse2_axis_ok(0) && !tfw_estop_blocking_axis(0) && !(s_hooks.seq_busy && s_hooks.seq_busy())) {     /* M-04: latched or input still active */
                 tfw_pulse2_set_dir(0, fwd);
                 e = tfw_pulse2_move(0, speed, pos, acc, dec);
             }

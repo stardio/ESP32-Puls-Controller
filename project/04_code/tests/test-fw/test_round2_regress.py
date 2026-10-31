@@ -181,26 +181,26 @@ def test_n03_start_refused_and_rechecked_while_estop_is_latched():
     t = src("components", "tfw_pulse2", "tfw_pulse2.c")
     sc = t[t.index("static esp_err_t start_common"):]
     sc = sc[:sc.index("\nesp_err_t tfw_pulse2_move")]
-    first = sc.index("s_block_fn()")                             # before pcnt_unit_clear_count
+    first = sc.index("s_block_fn((uint8_t)(a - s_ax))")                             # before pcnt_unit_clear_count
     assert first < sc.index("pcnt_unit_clear_count(a->pcnt)")
     start = sc.index("mcpwm_timer_start_stop(a->timer, MCPWM_TIMER_START_NO_STOP)")
-    assert sc.index("s_block_fn()", start) > start                # and once more after the timer was started
+    assert sc.index("s_block_fn((uint8_t)(a - s_ax))", start) > start                # and once more after the timer was started
     assert "tfw_pulse2_stop((uint8_t)(a - s_ax))" in sc
-    assert "tfw_pulse2_set_block_fn(tfw_estop_blocking)" in src("main", "tfw_main.c")
+    assert "tfw_pulse2_set_block_fn(tfw_estop_blocking_axis)" in src("main", "tfw_main.c")
 
 
 def test_n03_hw_move_and_hw_fixed_refuse_during_block():
     main = src("main", "tfw_main.c")
     for fn in ("hw_move", "hw_fixed"):
         m = re.search(r"static int " + fn + r"\(.*?\n?\{(.*?)\n(?:static|\n)", main, re.S)
-        assert m and "tfw_estop_blocking()" in m.group(1), fn
+        assert m and "tfw_estop_blocking_axis(ax)" in m.group(1), fn
 
 
 def test_n03_isr_latches_before_stopping():
     t = src("components", "tfw_estop_io", "tfw_estop_io.c")
     body = t[t.index("es_isr(void *arg)"):]
     body = body[:body.index("\n}")]
-    assert body.index("tfw_es_trip(") < body.index("tfw_pulse2_stop(0)")
+    assert body.index("tfw_es_trip(") < body.index("tfw_pulse2_stop(ax)")
 
 
 # ================================================================ M-05: first periods after a stop

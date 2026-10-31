@@ -20,5 +20,7 @@ steps:
   - {id: T-05, name: "4 TCP clients + HMI during sequence", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 777, hmi: true, tcp_load: {clients: 4, fc: MIX, qty: 125, interval_ms: 0, settle_s: 2}, la_csv: la_t05.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
   # T-06: iram_safe must equal the build you flashed; the tool compares it with cfg_flags b0 (0x7012)
   - {id: T-06, name: "NVS write 100 ms", cmd: RUN_SEQ, axis_mask: 3, freq_hz: 200000, repeat: 1000, seed: 99, nvs_period_ms: 100, iram_safe: true, la_csv: la_t06.csv, la_pulse_channels: [ax1, ax2], timeout_s: 7200}
-  # T-07: trigger GPIO19 by hand during the run; latch_probe then tries RUN while latched (expects 0x10)
-  - {id: T-07, name: "e-stop during run, latch probe", cmd: RUN_FIXED, axis_mask: 3, freq_hz: 200000, count: 4000000, latch_probe: true, estop_active_low: true, la_trigger_edge: fall, timeout_s: 120}
+  # T-07 stimulus (baseline v0.4 F-12): feed the J15 DI2 terminal (GPIO19, axis 1 STOP) from a 24 V switch wired as an NC contact; OPEN it during the run.
+  # NC contact = active HIGH (TFW_ESTOP_ACTIVE_LOW=n) -> LA trigger on the rising edge. Only axis 1 must stop; axis 2 keeps running (axis 2 STOP/START inputs are ignored on the 1-axis carrier, TFW_AX2_IO_PRESENT=n, D-068).
+  # latch_probe then tries RUN while latched (expects 0x10)
+  - {id: T-07, name: "e-stop during run, latch probe", cmd: RUN_FIXED, axis_mask: 3, freq_hz: 200000, count: 4000000, latch_probe: true, estop_active_low: false, la_trigger_edge: rise, timeout_s: 120}

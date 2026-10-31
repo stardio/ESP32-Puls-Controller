@@ -104,15 +104,35 @@ static void clear_stats(void)
 
 /* ------------------------------------------------------------------ sequencer glue */
 static int hw_move(void *c, uint8_t ax, uint32_t sp, uint32_t cnt, uint32_t a, uint32_t d)
-{ (void)c; if (tfw_estop_blocking()) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_move(ax, sp, cnt, a, d) == ESP_OK ? 0 : -1; }
+{ (void)c; if (tfw_estop_blocking_axis(ax)) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_move(ax, sp, cnt, a, d) == ESP_OK ? 0 : -1; }
 static int hw_fixed(void *c, uint8_t ax, uint32_t f, uint32_t cnt)
-{ (void)c; if (tfw_estop_blocking()) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_run_fixed(ax, f, cnt) == ESP_OK ? 0 : -1; }
+{ (void)c; if (tfw_estop_blocking_axis(ax)) return -1; tfw_pulse2_set_dir(ax, true); return tfw_pulse2_run_fixed(ax, f, cnt) == ESP_OK ? 0 : -1; }
 static bool hw_busy(void *c, uint8_t ax) { (void)c; return tfw_pulse2_busy(ax); }
 static uint32_t hw_count(void *c, uint8_t ax) { (void)c; return tfw_pulse2_count(ax); }
 static void hw_stop(void *c, uint8_t ax) { (void)c; tfw_pulse2_stop(ax); }
 static void hw_delay(void *c, uint32_t ms) { (void)c; vTaskDelay(pdMS_TO_TICKS(ms) ? pdMS_TO_TICKS(ms) : 1); }
 static uint32_t hw_now(void *c) { (void)c; return (uint32_t)(esp_timer_get_time() / 1000); }
-static bool hw_aborted(void *c) { (void)c; return s_abort || tfw_estop_blocking(); }
+/* A sequence uses the axes of g_win.axis_mask together: it ends when the STOP of any of those axes is active. The hardware
+ * STOP itself stays per axis (see tfw_estop_io.c); this only decides when the test sequencer gives up. */
+static bool mask_blocked(uint16_t mask)
+{
+    return ((mask & 1u) && tfw_estop_blocking_axis(0)) || ((mask & 2u) && tfw_estop_blocking_axis(1));
+}
+static bool hw_aborted(void *c) { (void)c; return s_abort || mask_blocked(g_win.axis_mask); }
+
+/* START edge (baseline v0.4 sec.3): starts that axis with the current window freq/count (fixed frequency run).
+ * Called by the estop watch task only for accepted edges (STOP not active). Ignored while a sequence is running. */
+static void on_start_edge(uint8_t ax)
+{
+    if (s_cmd_lock) xSemaphoreTake(s_cmd_lock, portMAX_DELAY);
+    if (!s_seq_running && tfw_pulse2_axis_ok(ax) && !tfw_estop_blocking_axis(ax) && !tfw_pulse2_busy(ax)) {
+        tfw_pulse2_set_dir(ax, true);
+        esp_err_t e = tfw_pulse2_run_fixed(ax, g_win.freq, g_win.count);
+        ESP_LOGI(TAG, "START edge axis %u: run_fixed %lu Hz x %lu -> 0x%x", (unsigned)(ax + 1), (unsigned long)g_win.freq,
+                 (unsigned long)g_win.count, (unsigned)e);
+    }
+    if (s_cmd_lock) xSemaphoreGive(s_cmd_lock);
+}
 
 static void seq_task(void *arg)
 {
@@ -133,7 +153,7 @@ static void seq_task(void *arg)
 static uint16_t handle_cmd_locked(uint16_t cmd)
 {
     /* M-04: refuse while latched OR while the input is still active (also when it was active at boot) */
-    uint16_t st = tfw_cmd_check(&g_win, cmd, s_seq_running, tfw_estop_blocking(), tfw_pulse2_axis_ok(1));
+    uint16_t st = tfw_cmd_check(&g_win, cmd, s_seq_running, mask_blocked(g_win.axis_mask), tfw_pulse2_axis_ok(1));
     if (st) { g_win.status = st; return st; }
     switch (cmd) {
     case TFW_CMD_RUN_FIXED: case TFW_CMD_RUN_MOVE: case TFW_CMD_RUN_SEQ:
@@ -281,10 +301,12 @@ void app_main(void)
              0
 #endif
              );
-    ESP_LOGI(TAG, "pins: AX1 PLS=%d DIR=%d EN=%d | AX2 PLS=%d DIR=%d EN=%d | ESTOP=%d active %s | dbg=%d/%d | probe=%d",
-             CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
-             CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO, CONFIG_TFW_ESTOP_GPIO,
-             TFW_B_ESTOP_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO);
+    ESP_LOGI(TAG, "pins: AX1 PLS=%d DIR=%d | AX2 PLS=%d DIR=%d | pulse OE=%d (shared, active %s) | STOP ax1=%d (GPIO19 = DI2(J15)) ax2=%d "
+             "active %s | START ax1=%d ax2=%d | servo ON DO1=23 DO2=26, DO3/DO4 off | ax2 DI present=%d | dbg=%d/%d | probe=%d",
+             CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO,
+             CONFIG_TFW_PULSE_OE_GPIO, TFW_B_PULSE_OE_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_ESTOP2_GPIO,
+             TFW_B_ESTOP_ACTIVE_LOW ? "LOW" : "HIGH", CONFIG_TFW_START_GPIO, CONFIG_TFW_START2_GPIO, TFW_B_AX2_IO_PRESENT,
+             CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO);
     ESP_LOGI(TAG, "legacy NVS-on-write=%d (servo1axis behaviour; default off); max_clients=%d (reg 0x705E); irq levels estop=%d pcnt=%d gpt=%d",
              TFW_B_LEGACY_NVS_ON_WRITE, CONFIG_TFW_MAX_CLIENTS, CONFIG_TFW_IRQ_PRIO_ESTOP, CONFIG_TFW_IRQ_PRIO_PCNT, CONFIG_TFW_IRQ_PRIO_GPT);
 
@@ -300,9 +322,12 @@ void app_main(void)
         ESP_LOGE(TAG, "AXIS 2 UNAVAILABLE (err 0x%x): RUN commands with axis 2 return tst_status 0x12", (unsigned)tfw_pulse2_axis_err(1));
 
     mcpwm_oper_handle_t opers[2] = {tfw_pulse2_operator(0), tfw_pulse2_operator(1)};
-    esp_err_t ee = tfw_estop_init(CONFIG_TFW_ESTOP_GPIO, TFW_B_ESTOP_ACTIVE_LOW, opers);
+    /* D-068: without the carrier axis 2 DI parts (TFW_AX2_IO_PRESENT=n) axis 2 has no STOP/START input */
+    const int stop_pins[2] = {CONFIG_TFW_ESTOP_GPIO, (TFW_B_AX2_IO_PRESENT && CONFIG_TFW_AXIS_COUNT == 2) ? CONFIG_TFW_ESTOP2_GPIO : -1};
+    esp_err_t ee = tfw_estop_init(stop_pins, TFW_B_ESTOP_ACTIVE_LOW, opers);
+    tfw_estop_set_start_cb(on_start_edge);
     if (ee != ESP_OK) ESP_LOGE(TAG, "tfw_estop_init failed 0x%x: ALL motion commands are refused (0x10) - N-02", (unsigned)ee);
-    tfw_pulse2_set_block_fn(tfw_estop_blocking);
+    tfw_pulse2_set_block_fn(tfw_estop_blocking_axis);
     if (!(g_win.cfg_flags & TFW_CFG_BRAKE_USE)) { tfw_estop_set_path(1); g_win.es_path_sel = 1; }
     else g_win.es_path_sel = 3;
 

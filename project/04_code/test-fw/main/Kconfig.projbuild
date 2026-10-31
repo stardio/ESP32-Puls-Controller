@@ -33,6 +33,14 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
           (closed in normal operation); opening it is the STOP. Check the boot log: with the switch closed the input
           must read "inactive". If it reads ACTIVE, the TLP293 polarity is the other way round: flip TFW_ESTOP_ACTIVE_LOW.
           Axis 2: the same with the DI4 terminal (GPIO17).
+    config TFW_AX2_IO_PRESENT
+        bool "Carrier axis 2 DI parts present (DI3 START, DI4 STOP wired) [D-068]"
+        default n
+        help
+          Off (default): axis 2 STOP (GPIO17) and START (GPIO18) are ignored (not configured, never block); axis 2 pulses
+          are driven only by Modbus/host commands. This keeps a floating NC-type input from holding axis 2 "always
+          stopped" when only the 1-axis carrier is available and GPIO20/21 are measured at the board header.
+          Turn on only when the 2-axis carrier (U16, J14, DI3/DI4) is wired.
     config TFW_ESTOP2_GPIO
         int "Axis 2 STOP input GPIO (DI4; baseline v0.4 F-06: GPIO17; -1 = none)"
         default 17

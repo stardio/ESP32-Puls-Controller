@@ -40,6 +40,7 @@ typedef struct { uint64_t pin_bit_mask; int mode; int pull_up_en, pull_down_en, 
 #define GPIO_PULLDOWN_ENABLE 1
 #define GPIO_PULLDOWN_DISABLE 0
 #define GPIO_INTR_NEGEDGE 2
+#define GPIO_INTR_DISABLE 0
 #define GPIO_INTR_POSEDGE 1
 #define ESP_INTR_FLAG_LEVEL1 2
 #define ESP_INTR_FLAG_LEVEL2 4

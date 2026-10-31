@@ -74,12 +74,12 @@ def test_m03_estop_has_highest_interrupt_level():
 # ---- M-04
 def test_m04_boot_state_is_latched_and_used_for_every_run_path():
     es = src("components", "tfw_estop_io", "tfw_estop_io.c")
-    assert re.search(r"tfw_es_boot_check\(&s_es, tfw_estop_input_active\(\)\)", es)
-    assert "return !s_init_ok || tfw_es_blocking(&s_es, tfw_estop_input_active())" in es      # R2 N-02: not-initialised also blocks
+    assert re.search(r"tfw_es_boot_check\(&s_es\[g\], tfw_estop_input_active\(g\)\)", es)
+    assert "if (!s_init_ok) return true;" in es      # R2 N-02: not-initialised also blocks
     main = src("main", "tfw_main.c")
-    assert "tfw_cmd_check(&g_win, cmd, s_seq_running, tfw_estop_blocking()" in main
+    assert "tfw_cmd_check(&g_win, cmd, s_seq_running, mask_blocked(g_win.axis_mask)" in main
     assert "tfw_estop_latched()" not in main and "tfw_estop_latched()" not in src("components", "tfw_modbus", "tfw_modbus.c")
-    assert "!tfw_estop_blocking()" in src("components", "tfw_modbus", "tfw_modbus.c")
+    assert "!tfw_estop_blocking_axis(0)" in src("components", "tfw_modbus", "tfw_modbus.c")
 
 
 # ---- M-06
@@ -91,10 +91,11 @@ def test_m06_late_reference_is_not_cfg_period_in_task_mode():
 
 # ---- M-08
 def test_m08_axis2_and_probe_pins_default_to_unset():
-    for n in ("TFW_AX2_PLS_GPIO", "TFW_AX2_DIR_GPIO", "TFW_AX2_EN_GPIO", "TFW_PROBE_GPIO"):
-        assert kconfig_default(n) == -1, n
+    assert kconfig_default("TFW_PROBE_GPIO") == -1
+    assert (kconfig_default("TFW_AX2_PLS_GPIO"), kconfig_default("TFW_AX2_DIR_GPIO")) == (20, 21)          # F-01, F-02
+    assert not re.search(r"TFW_AX[12]_EN_GPIO", open(os.path.join(ROOT, "main", "Kconfig.projbuild")).read())   # F-03..F-05
     t = src("components", "tfw_pulse2", "tfw_pulse2.c")
-    assert "tfw_pin_conflict(ax2, 3, all1" in t and "probe_ok" in t
+    assert "tfw_pin_conflict(ax2, 2, all1" in t and "probe_ok" in t
 
 
 # ---- m-07 / m-09 / m-02 / m-01
@@ -114,3 +115,35 @@ def test_m02_measured_cpu_clock_reaches_the_timing_code():
 
 def test_m01_latency_product_is_saturating():
     assert "tfw_sat_mul(tfw_sat_mul(past, a->cur_ticks), s_ns_per_tick)" in src("components", "tfw_pulse2", "tfw_pulse2.c")
+
+
+# ---- baseline v0.4 (D-067 / D-068) static checks of the code that has no host build (pulse2, modbus, main)
+def test_v04_pulse_oe_is_shared_and_has_no_axis_en():
+    t = src("components", "tfw_pulse2", "tfw_pulse2.c")
+    assert not re.search(r"\ben_gpio\b", t) and "CONFIG_TFW_AX1_EN_GPIO" not in t
+    assert "tfw_oe_level(allow, TFW_B_PULSE_OE_ACTIVE_LOW)" in t and "oe_set(false)" in t and "oe_set(true)" in t
+    assert t.index("oe_set(false)") < t.index("create_axis(0,") < t.index("    oe_set(true);")
+    es = src("components", "tfw_estop_io", "tfw_estop_io.c")
+    assert "PULSE_OE" not in es and "GPIO_NUM_33" not in es                  # STOP never writes the shared enable
+
+
+def test_v04_stop_only_stops_its_own_axis():
+    es = src("components", "tfw_estop_io", "tfw_estop_io.c")
+    body = func_body(es, "es_isr")
+    assert "tfw_pulse2_stop(ax)" in body and "tfw_pulse2_stop(0)" not in body and "tfw_pulse2_stop(1)" not in body
+
+
+def test_v04_servo_on_and_log_wording():
+    mb = src("components", "tfw_modbus", "tfw_modbus.c")
+    assert "tfw_servo_do(on, on)" in mb and "d.do3" in mb and "d.do4" in mb
+    es = src("components", "tfw_estop_io", "tfw_estop_io.c")
+    assert "GPIO%d = DI2(J15)" in es
+    assert "Existing servo1axis code used GPIO18" not in es
+    assert "GPIO19 = DI2(J15)" in src("main", "tfw_main.c")
+
+
+def test_v04_ax2_io_absent_ignores_axis2_inputs():
+    assert re.search(r"config TFW_AX2_IO_PRESENT\n\s+bool [^\n]*\n\s+default n", src("main", "Kconfig.projbuild"))
+    main = src("main", "tfw_main.c")
+    assert "TFW_B_AX2_IO_PRESENT && CONFIG_TFW_AXIS_COUNT == 2) ? CONFIG_TFW_ESTOP2_GPIO : -1" in main
+    assert "TFW_B_AX2_IO_PRESENT ? CONFIG_TFW_START2_GPIO : -1" in src("components", "tfw_estop_io", "tfw_estop_io.c")
