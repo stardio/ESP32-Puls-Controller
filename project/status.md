@@ -9,7 +9,7 @@
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
 | ② 요구사항 | 완료 | srs.md v0.8, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
 | ③ 설계 | 진행중 | design-baseline-v0.4.md(v0.4.1, 현행 기준선), reviews/baseline-v0.4-review.md, bom-schematic.md v0.4, power-budget.md, schematic-reconciliation.md | 2축 실측(D-067) 후 G3. 시험 펌웨어 핀 수정 → 사용자 PC 실측 |
-| ④ 구현 | 진행중(예외) | 04_code/test-fw(시험), 04_code/firmware(2축 제품, D-071) | D-025 시험 펌웨어, D-071 2축 제품 펌웨어 선작성. G3 승인 전 |
+| ④ 구현 | 진행중(예외) | 04_code/test-fw(시험, 리뷰 4차·T-15 추가), 04_code/firmware(2축 제품, 리뷰 2차 통과) | D-025·D-071 예외. 남은 것: ESP-IDF 실제 빌드, 보드 실측(T-03~T-09·T-11·T-12·T-15), Minor n-01·n-02 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
 | ⑦ 마케팅 | 진행중(사전 마케팅) | marketing-plan, pricing-proposal v0.2, catalog, proposal, handoff (project/07_marketing) | D-031 예외: G6 전 초안·제안만. 잠정 판매가 1축 149,000원·2축 199,000원 VAT 별도(D-032). 확정은 G6 |
