@@ -36,4 +36,5 @@ void    fw_axis_legacy_reset(fw_axis_t *a);                 /* coil 2 extra: cur
 void    fw_axis_poll(fw_axis_t *a);                         /* every FW_UPDATE_MS */
 void    fw_axis_decel_all_reason(fw_axis_t *a, uint16_t alarm_code);   /* system-initiated decel stop (comm loss) */
 bool    fw_axis_running(const fw_axis_t *a);
+uint16_t fw_axis_sticky_alarm(const fw_axis_t *a);
 void    fw_axis_servo_boot(fw_axis_t *a);                   /* svon_at_boot */

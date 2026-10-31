@@ -45,6 +45,11 @@ bool     fw_hal_stop_latched(uint8_t axis);
 bool     fw_hal_stop_blocking(uint8_t axis);                 /* latched || active || io not initialised */
 uint16_t fw_hal_stop_state(uint8_t axis);                    /* 0 normal, 1 input active, 2 released-latched */
 uint16_t fw_hal_stop_trips(uint8_t axis);
+/* D-072: release the STOP latch of this axis for an explicit start command. 0 = released (input inactive for
+ * FW_ES_RELEASE_STABLE_MS), else FW_ES_REFUSED (0x10): input active / not stable / MCPWM fault recovery failed (the latch
+ * is then set again). Same mutual exclusion as the STOP ISR (review M-01). */
+int      fw_hal_stop_release(uint8_t axis);
+bool     fw_hal_fault_bound(uint8_t axis);                   /* MCPWM fault path (D-070 path B) of this axis configured */
 /* called from the watch task after an accepted START edge (latch already released); must not block */
 void     fw_hal_set_start_cb(void (*cb)(uint8_t axis));
 
@@ -53,7 +58,7 @@ uint32_t fw_hal_ms(void);                                    /* monotonic ms */
 void     fw_hal_delay_us(uint32_t us);
 uint16_t fw_hal_reset_reason(void);                          /* FW_RST_* of fw_params.h */
 int      fw_hal_wdt_init(void);                              /* task watchdog, panic = reset */
-void     fw_hal_wdt_add_self(void);
+int      fw_hal_wdt_add_self(void);                          /* 0 = subscribed (review m-02) */
 void     fw_hal_wdt_feed(void);
 void     fw_hal_reboot(void);                                /* does not return */
 void     fw_hal_mac(uint8_t mac[6]);

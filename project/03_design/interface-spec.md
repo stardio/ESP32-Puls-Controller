@@ -500,3 +500,21 @@ PULSE ____________________________|‾|_|‾|_|‾|_ ...      (첫 펄스는 방
 | 8 | (v0.2) 사용자 | 레거시 창의 동작 차이 두 가지 확인 필요: (a) 저장이 "쓰기마다 즉시" → "정지 후 지연 저장"으로 바뀜, (b) 코일 1(Servo ON)의 의미(`svon_mode`, DC-18) |
 | 9 | (v0.2) 사용자 | 32비트 워드 순서를 전 영역 "하위 워드 먼저"로 바꾼 것(DC-15)은 M2I 패널 설정 가능 여부가 미확인이다(PS-29) |
 | 10 | (v0.2) 사용자 | servo1axis 문서의 STOP GPIO18/19·HMI 연결 W5500/IP101 불일치는 D-027로 기준을 정했으나 커밋 2135568 코드(GPIO18)와 다르다(architecture R-14) |
+
+## 5.11 제품 펌웨어 추가 레지스터 (2026-10-31, regmap_version 2 유지, 추가만)
+
+출처: project/04_code/notes/firmware.md §12, 리뷰 firmware-review-1.md(0x400E 잠금 조건부 수용), D-059·D-070·D-072·D-073.
+
+| 주소 | 이름 | 접근 | 내용 |
+|---|---|---|---|
+| 0x002C | reset_reason | R | 0 불명, 1 전원, 2 SW, 3 패닉, 4 INT WDT, 5 TASK WDT, 6 기타 WDT, 7 브라운아웃, 8 딥슬립, 9 외부, 10 기타 (T-15) |
+| 0x002D | boot_status | R | b0 X 펄스, b1 Y 펄스, b2 STOP 입력, b3 NVS, b4 설정 CRC, b5 WDT, b6 X fault 경로, b7 Y fault 경로, b8 모드 되돌림, b9 GPIO33 허용 중 |
+| 0x002E | comm_mode_active | R | 0 TCP / 1 RTU (재부팅 후 적용된 값) |
+| 0x0031 | di_raw | R | b0 X START, b1 X STOP, b2 DI3, b3 DI4, b4 Y START, b5 Y STOP, b6 DI7, b7 DI8 (1 = 활성). 예비 DI 극성은 보드 실측 전 미확인 |
+| 0x0032 | do_state | R | b0~b3 = DO1~DO4 구동값 |
+| 0x0120 | user_do | R/W | b0 DO3, b1 DO4 (저장 안 함) |
+| 0x400E | comm_mode | R/W | 0 TCP / 1 RTU. RTU는 `FW_MODEL_RTU=y`에서만(그 외 예외 03). 출하 기본값: TCP 모델 TCP, RTU 모델 RTU(D-059). 재부팅 후 적용 |
+
+**네트워크 워드(0x4000~0x400E) 잠금:** `unlock_key`(0x0102)에 0x4D56을 쓴 뒤 10 s 안에만 값 변경 가능(그 외 예외 03, 같은 값 재쓰기 허용). 쓰기만으로는 저장되지 않으며 `net_apply`(0x400F)=1 또는 SAVE로 저장, 적용은 REBOOT 후.
+
+**D-072 반영:** 별도 해제 명령(ESTOP_RELEASE)은 없다. STOP 입력이 해제된 상태에서 들어온 시작 명령(물리 START 엣지 또는 Modbus 운전 시작)이 래치를 풀고 시작한다. §5.5·§5.8의 해제 명령 기술은 이 절로 대체한다.

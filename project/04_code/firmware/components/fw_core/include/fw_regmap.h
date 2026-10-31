@@ -37,7 +37,8 @@ enum { FW_SSB_ESTOP_IN = 1u << 0, FW_SSB_ESTOP_LATCH = 1u << 1, FW_SSB_ALARM = 1
        FW_SSB_SAVING = 1u << 4, FW_SSB_NVM_ERR = 1u << 5, FW_SSB_COMMLOSS = 1u << 6 };
 /* boot_status (0x002D): a 1 bit means that part initialised OK; motion is allowed only when all REQUIRED bits are set */
 enum { FW_BOOT_PULSE_X = 1u << 0, FW_BOOT_PULSE_Y = 1u << 1, FW_BOOT_STOP_IO = 1u << 2, FW_BOOT_NVS = 1u << 3,
-       FW_BOOT_CFG_OK = 1u << 4, FW_BOOT_WDT = 1u << 5, FW_BOOT_MODE_FELLBACK = 1u << 8, FW_BOOT_OE_ALLOWED = 1u << 9 };
+       FW_BOOT_CFG_OK = 1u << 4, FW_BOOT_WDT = 1u << 5, FW_BOOT_FAULT_X = 1u << 6, FW_BOOT_FAULT_Y = 1u << 7 /* review M-06: MCPWM fault path of that axis bound */,
+       FW_BOOT_MODE_FELLBACK = 1u << 8, FW_BOOT_OE_ALLOWED = 1u << 9 };
 /* alarm codes (5.8) */
 enum { FW_AL_NONE = 0, FW_AL_ESTOP = 0x0101, FW_AL_COMMLOSS = 0x0401, FW_AL_PE_HW = 0x0602, FW_AL_PARAM = 0x0701,
        FW_AL_NVM = 0x0702, FW_AL_WDT = 0x0801 };

@@ -84,7 +84,7 @@ void fw_dev_init(fw_dev_t *d, uint8_t axis_count, bool model_rtu)
     memset(d, 0, sizeof(*d));
     d->axis_count = axis_count > FW_MAX_AXES ? FW_MAX_AXES : (axis_count ? axis_count : 1);
     d->model_rtu = model_rtu;
-    fw_cfg_defaults(&d->cfg);
+    fw_cfg_defaults_model(&d->cfg, model_rtu);      /* D-059 */
 }
 
 /* ------------------------------------------------------------------ reads */
@@ -339,13 +339,19 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
     }
     if (t_sys && fw_sys_validate(cand.sys)) return 3;
     if (t_net && fw_net_validate(cand.net, d->model_rtu)) return 3;
+    /* review M-05: network / comm-mode words only with the unlock key; a net-only change is NOT auto-saved (it is saved
+     * by the checked NET_APPLY 0x400F or an explicit SAVE) */
+    if (t_net && memcmp(cand.net, d->cfg.net, sizeof(cand.net)) != 0 && !fw_dev_unlocked(d)) return 3;
 
     /* commit */
     cand.crc = d->cfg.crc;
     const bool changed = memcmp(&cand, &d->cfg, sizeof(cand)) != 0;
     if (changed) {
+        fw_cfg_t rest = cand;
+        memcpy(rest.net, d->cfg.net, sizeof(rest.net));
+        const bool non_net_change = memcmp(&rest, &d->cfg, sizeof(rest)) != 0;
         d->cfg = cand;
-        if (d->ops.cfg_changed) d->ops.cfg_changed(d->ops.ctx);
+        if (non_net_change && d->ops.cfg_changed) d->ops.cfg_changed(d->ops.ctx);
     }
     if (unlock_v) { d->unlock_active = true; d->unlock_deadline_ms = d->now_ms + FW_UNLOCK_MS; (void)unlockval; }
     if (userdo_v) { d->user_do = userdo; if (d->ops.user_do) d->ops.user_do(d->ops.ctx, userdo); }
@@ -429,7 +435,7 @@ size_t fw_mb_process(fw_dev_t *d, const uint8_t *req, size_t len, uint8_t *resp)
     if (fc == 1 || fc == 2) {
         if (len != 5) return exc(fc, 3, resp);
         const unsigned a = be16(req + 1), n = be16(req + 3);
-        if (!n || n > 64) return exc(fc, 3, resp);
+        if (!n || n > 2000) return exc(fc, 3, resp);     /* m-09: Modbus limit; ranges outside the defined bits -> 02 */
         const unsigned nb = (n + 7u) / 8u;
         uint32_t di = 0;
         if (fc == 2) {

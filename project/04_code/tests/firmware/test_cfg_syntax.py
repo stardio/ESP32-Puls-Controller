@@ -264,3 +264,15 @@ def test_model_fragments(model, axes, rtu, shims, tmp_path):
     for src in SOURCES:
         r = gcc(src, sdk, shims)
         assert r.returncode == 0 and "warning" not in r.stderr, "%s [%s]:\n%s" % (os.path.relpath(src, FW), model, r.stderr[-2000:])
+
+
+def test_stop_isr_iram_flag_is_unconditional_and_mux_protected():
+    """review m-05 / M-01: the STOP ISR service always asks for IRAM (not tied to the PCNT option); the latch is
+    set (ISR, level guard) and released (task) under the same portMUX."""
+    src = open(os.path.join(COMP, "fw_hal", "port_esp32p4", "hal_io.c"), encoding="utf-8").read()
+    assert "flags |= ESP_INTR_FLAG_IRAM;" in src
+    assert not re.search(r"#if[^\n]*PCNT_ISR_IRAM_SAFE[^\n]*\n\s*flags", src)
+    assert src.count("portENTER_CRITICAL_ISR(&s_stop_mux)") == 1 and src.count("portENTER_CRITICAL(&s_stop_mux)") >= 4
+    # D-059 / M-06: the product cannot use a fault-less axis
+    ax = open(os.path.join(COMP, "fw_motion", "fw_axis.c"), encoding="utf-8").read()
+    assert "FW_BOOT_FAULT_X" in ax and "fw_hal_stop_release" in ax

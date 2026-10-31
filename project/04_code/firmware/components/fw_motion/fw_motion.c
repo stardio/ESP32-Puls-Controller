@@ -17,7 +17,7 @@ static SemaphoreHandle_t s_lock;
 static fw_save_t s_save;
 static fw_commloss_t s_cl;
 static volatile uint8_t s_start_pending;
-static bool s_saving, s_reboot_req, s_cl_tripped;
+static bool s_saving, s_reboot_req, s_reboot_commit, s_cl_tripped;   /* s_saving / s_reboot_commit: set under the lock, no START */
 static uint32_t s_reboot_at_ms;
 static uint32_t s_hb_ms;
 
@@ -32,6 +32,9 @@ void fw_motion_net_words(uint16_t net[FW_NET_WORDS])
 void fw_motion_set_link(bool up) { fw_motion_lock(); s_dev.link = up; fw_motion_unlock(); }
 void fw_motion_set_clients(unsigned n) { fw_motion_lock(); s_dev.tcp_clients = (uint16_t)n; fw_motion_unlock(); }
 void fw_motion_set_mac(const uint8_t mac[6]) { fw_motion_lock(); memcpy(s_dev.mac, mac, 6); fw_motion_unlock(); }
+
+/* review M-03: from the moment motion_task decides to save / reboot (under the lock) no start is accepted */
+static bool start_blocked(void) { return s_saving || s_reboot_commit; }
 
 static bool any_running(void)
 {
@@ -54,7 +57,7 @@ static uint8_t op_axis_cmd(void *ctx, uint8_t axis, uint16_t cmd)
 {
     (void)ctx;
     if (axis >= s_dev.axis_count) return FW_RES_RANGE;
-    if (s_saving && (cmd == FW_CMD_START_ABS || cmd == FW_CMD_START_REL)) {   /* no pulses while NVS is written */
+    if (start_blocked() && (cmd == FW_CMD_START_ABS || cmd == FW_CMD_START_REL)) {   /* no pulses while NVS is written */
         s_dev.ax[axis].cmd_result = FW_RES_RUNNING;
         return FW_RES_RUNNING;
     }
@@ -63,7 +66,7 @@ static uint8_t op_axis_cmd(void *ctx, uint8_t axis, uint16_t cmd)
 static uint8_t op_legacy_start(void *ctx)
 {
     (void)ctx;
-    if (s_saving) { s_dev.ax[0].cmd_result = FW_RES_RUNNING; return FW_RES_RUNNING; }
+    if (start_blocked()) { s_dev.ax[0].cmd_result = FW_RES_RUNNING; return FW_RES_RUNNING; }
     return fw_axis_start_legacy(&s_ax[0]);
 }
 static void op_legacy_reset(void *ctx) { (void)ctx; fw_axis_legacy_reset(&s_ax[0]); }
@@ -89,7 +92,7 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
     case FW_SYS_LOAD_DEFAULT:
         if (locked) return FW_SRES_LOCKED;
         if (any_running()) return FW_SRES_AXIS_RUNNING;
-        fw_cfg_defaults(&s_dev.cfg);
+        fw_cfg_defaults_model(&s_dev.cfg, s_dev.model_rtu);      /* D-059: RTU model keeps RTU */
         fw_save_request(&s_save);
         return FW_SRES_RUNNING_CMD;
     case FW_SYS_REBOOT:
@@ -110,7 +113,8 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
 /* ------------------------------------------------------------------ START edge from the HAL watch task */
 static void on_start_edge(uint8_t axis) { __atomic_fetch_or(&s_start_pending, (uint8_t)(1u << axis), __ATOMIC_SEQ_CST); }
 
-/* ------------------------------------------------------------------ save */
+/* ------------------------------------------------------------------ save
+ * Called after motion_task set s_saving under the lock (save_now) or, for the reboot path, with s_reboot_commit set. */
 static void do_save(void)
 {
     fw_cfg_t img;
@@ -171,18 +175,28 @@ static void refresh_system(uint32_t now)
 static void motion_task(void *arg)
 {
     (void)arg;
-    fw_hal_wdt_add_self();
+    if (fw_hal_wdt_add_self() != 0) {                                  /* m-02: unsupervised operation is not allowed */
+        fw_motion_lock();
+        s_dev.boot_status &= (uint16_t)~FW_BOOT_WDT;
+        update_oe();
+        fw_motion_unlock();
+        ESP_LOGE(TAG, "task watchdog subscription FAILED: pulses forbidden");
+    }
     TickType_t last = xTaskGetTickCount();
     for (;;) {
         fw_hal_wdt_feed();
         bool save_now = false;
+        uint8_t keep = 0;
         fw_motion_lock();
         const uint32_t now = fw_hal_ms();
         s_dev.now_ms = now;
         const uint8_t pend = __atomic_exchange_n(&s_start_pending, 0, __ATOMIC_SEQ_CST);
         for (unsigned a = 0; a < s_dev.axis_count; ++a) {
-            if ((pend & (1u << a)) && !s_saving) fw_axis_start_physical(&s_ax[a]);
+            if (!(pend & (1u << a))) continue;
+            if (start_blocked()) keep |= (uint8_t)(1u << a);          /* m-04: not dropped, retried after the save */
+            else fw_axis_start_physical(&s_ax[a]);
         }
+        if (keep) __atomic_fetch_or(&s_start_pending, keep, __ATOMIC_SEQ_CST);
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_poll(&s_ax[a]);
 
         const uint16_t *sys = s_dev.cfg.sys;
@@ -191,9 +205,15 @@ static void motion_task(void *arg)
             for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_decel_all_reason(&s_ax[a], FW_AL_COMMLOSS);
             s_cl_tripped = true;
         }
+        if (s_cl_tripped) {                                           /* m-06: cleared when no axis holds the comm-loss alarm */
+            bool any = false;
+            for (unsigned a = 0; a < s_dev.axis_count; ++a) any = any || fw_axis_sticky_alarm(&s_ax[a]) == FW_AL_COMMLOSS;
+            s_cl_tripped = any;
+        }
         refresh_system(now);
-        if (fw_save_due(&s_save, now, sys[FW_S_AUTO_SAVE] != 0, running)) save_now = true;
+        if (fw_save_due(&s_save, now, sys[FW_S_AUTO_SAVE] != 0, running)) { save_now = true; s_saving = true; }
         const bool do_reboot = s_reboot_req && (int32_t)(now - s_reboot_at_ms) >= 0 && !running;
+        if (do_reboot) s_reboot_commit = true;                         /* decided under the lock: no START from here on */
         fw_motion_unlock();
 
         if (save_now) do_save();
@@ -275,9 +295,13 @@ int fw_motion_start(const fw_motion_cfg_t *c)
     for (unsigned a = 0; a < c->axis_count; ++a)
         if (fw_hal_pulse_ready((uint8_t)a)) s_dev.boot_status |= (a == 0 ? FW_BOOT_PULSE_X : FW_BOOT_PULSE_Y);
     if (pe != 0) ESP_LOGE(TAG, "pulse engine init error 0x%x", (unsigned)pe);
+    fw_hal_set_start_cb(on_start_edge);                                    /* m-04: before the io task exists */
     if (fw_hal_io_init(c->axis_count) == 0) s_dev.boot_status |= FW_BOOT_STOP_IO;
     else ESP_LOGE(TAG, "STOP/START input init FAILED: operation prohibited");
-    fw_hal_set_start_cb(on_start_edge);
+    for (unsigned a = 0; a < c->axis_count; ++a) {                         /* M-06: fault path of each axis */
+        if (fw_hal_fault_bound((uint8_t)a)) s_dev.boot_status |= (a == 0 ? FW_BOOT_FAULT_X : FW_BOOT_FAULT_Y);
+        else ESP_LOGE(TAG, "axis %u: MCPWM fault path not bound: axis operation PROHIBITED (alarm E-PE-HW)", (unsigned)(a + 1));
+    }
 
     for (unsigned a = 0; a < c->axis_count; ++a) fw_axis_init(&s_ax[a], &s_dev, (uint8_t)a, res[a]);
     const int allowed = update_oe();

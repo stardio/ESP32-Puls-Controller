@@ -4,8 +4,10 @@
  *  - STOP (NC contact, input active = contact open) trips a per-axis latch (ISR calls fw_es_trip, always_inline so
  *    that it is compiled into the IRAM ISR - review M-01).
  *  - A STOP that is already active at boot latches at once (review M-04).
- *  - The latch is released ONLY after the input has been inactive for FW_ES_RELEASE_STABLE_MS and only by a START
- *    edge (no reset command). A START edge while STOP is active/latched-and-not-releasable is consumed and ignored. */
+ *  - D-072: the latch is released ONLY after the input has been inactive for FW_ES_RELEASE_STABLE_MS and only by an
+ *    explicit start: a physical START edge, or an HMI/Modbus start command (fw_hal_stop_release, called by the axis
+ *    when the start is otherwise acceptable). There is no separate release command (ESTOP_RELEASE is refused).
+ *    A start while STOP is active or not yet stable is refused (0x10) and the latch stays. */
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -35,6 +37,14 @@ void     fw_es_boot_check(fw_es_t *e, bool input_active);          /* latch at o
 uint16_t fw_es_state(const fw_es_t *e, bool input_active);         /* 0 normal, 1 input active, 2 released-latched */
 uint16_t fw_es_release(fw_es_t *e, bool input_active);            /* 0 ok, FW_ES_REFUSED */
 void     fw_es_input_sample(fw_es_t *e, bool input_active, uint32_t dt_ms);
+/* Level backup of the edge ISR (review M-02): input active but not latched -> latch now. Returns true when it tripped
+ * (the caller must then cut the pulse output of this axis). Call with the same lock as the ISR. */
+FW_INLINE bool fw_es_level_guard(fw_es_t *e, bool input_active)
+{
+    if (!input_active || e->latched) return false;
+    fw_es_trip(e, 0u);
+    return true;
+}
 
 typedef struct { bool stable; uint32_t cand_ms; } fw_start_t;
 void fw_start_init(fw_start_t *s, bool initial_active);            /* active at boot is NOT an edge */

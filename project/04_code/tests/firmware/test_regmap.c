@@ -326,13 +326,48 @@ static void test_network_and_mode(void)
     CHECK_EQ(wr32(0x4000, 0), 3);                                       /* ip 0.0.0.0 */
     CHECK_EQ(wr32(0x4002, 0xFF00FF00u), 3);
     CHECK_EQ(wr1(0x400A, 144), 3);
+    /* review M-05: no write of the network words without the unlock key; nothing changes, no save request */
+    CHECK_EQ(wr32(0x4000, 0xC0A80164u), 3); CHECK_EQ(reg32(0x4000), 0xC0A800DCu);
+    CHECK_EQ(wr1(0x4006, 5), 3); CHECK_EQ(reg(0x4006), 1);
+    CHECK_EQ(R.cfg_changed_n, 0);
+    CHECK_EQ(wr1(0x0102, FW_UNLOCK_KEY), 0);
     CHECK_EQ(wr32(0x4000, 0xC0A80164u), 0); CHECK_EQ(reg32(0x4000), 0xC0A80164u);
+    CHECK_EQ(R.cfg_changed_n, 0);                                       /* a net-only change is never auto-saved (NET_APPLY / SAVE) */
+    CHECK_EQ(wr1(0x1103, 20), 0); CHECK_EQ(R.cfg_changed_n, 1);         /* other words still are */
     CHECK_EQ(wr1(0x4006, 248), 3);
     CHECK_EQ(wr1(0x400F, 2), 3); CHECK_EQ(wr1(0x400F, 1), 0); CHECK_EQ(R.last_sys, FW_SYS_NET_APPLY);
     setup(2, true);                                                     /* RTU model */
+    CHECK_EQ(reg(0x400E), FW_MODE_RTU);                                 /* D-059: shipped default of the RTU model is RTU */
+    CHECK_EQ(wr1(0x400E, FW_MODE_TCP), 3);                              /* locked: even the RTU model cannot switch without the key */
+    CHECK_EQ(reg(0x400E), FW_MODE_RTU); CHECK_EQ(R.cfg_changed_n, 0);
+    CHECK_EQ(wr1(0x0102, FW_UNLOCK_KEY), 0);
+    CHECK_EQ(wr1(0x400E, FW_MODE_TCP), 0); CHECK_EQ(reg(0x400E), FW_MODE_TCP); CHECK_EQ(R.cfg_changed_n, 0);
     CHECK_EQ(wr1(0x400E, FW_MODE_RTU), 0); CHECK_EQ(reg(0x400E), FW_MODE_RTU);
     CHECK_EQ(wr1(0x400E, 2), 3);
     CHECK_EQ(wr1(0x400A, 1152), 0); CHECK_EQ(wr1(0x400B, 1), 0); CHECK_EQ(wr1(0x400C, 247), 0); CHECK_EQ(wr1(0x400C, 248), 3);
+}
+
+/* review M-04 / T-01: model dependent shipped default (D-059) */
+static void test_model_default_comm_mode(void)
+{
+    fw_cfg_t c;
+    fw_cfg_defaults(&c); CHECK_EQ(c.net[FW_N_COMM_MODE], FW_MODE_TCP);
+    fw_cfg_defaults_model(&c, false); CHECK_EQ(c.net[FW_N_COMM_MODE], FW_MODE_TCP);
+    fw_cfg_defaults_model(&c, true); CHECK_EQ(c.net[FW_N_COMM_MODE], FW_MODE_RTU);
+    CHECK(fw_cfg_verify(&c, sizeof(c)) == FW_CFG_OK);                   /* sealed again after the change */
+    setup(2, true); CHECK_EQ(D.cfg.net[FW_N_COMM_MODE], FW_MODE_RTU);   /* first boot / corrupt image path */
+    setup(2, false); CHECK_EQ(D.cfg.net[FW_N_COMM_MODE], FW_MODE_TCP);
+    setup(1, true); CHECK_EQ(D.cfg.net[FW_N_COMM_MODE], FW_MODE_RTU);
+}
+
+/* review m-09: FC01/FC02 count limit and exception codes */
+static void test_read_bits_limits(void)
+{
+    setup(2, false);
+    CHECK_EQ(rd(1, 0, 4), 0);
+    CHECK_EQ(rd(1, 0, 0), 3); CHECK_EQ(rd(1, 0, 2001), 3);              /* count 0 / > 2000: 03 */
+    CHECK_EQ(rd(1, 0, 100), 2); CHECK_EQ(rd(2, 0, 100), 2);             /* beyond the defined bits: 02 */
+    CHECK_EQ(rd(2, 0, 8), 0);
 }
 
 static void test_history(void)
@@ -381,7 +416,7 @@ int main(void)
 {
     RUN(test_legacy_read); RUN(test_legacy_write); RUN(test_legacy_coils); RUN(test_system_area);
     RUN(test_system_cfg_and_commands); RUN(test_axis_area_layout); RUN(test_axis_op_and_params); RUN(test_one_axis_model);
-    RUN(test_atomic_write); RUN(test_commands); RUN(test_config_change_notification); RUN(test_network_and_mode);
+    RUN(test_atomic_write); RUN(test_commands); RUN(test_config_change_notification); RUN(test_network_and_mode); RUN(test_model_default_comm_mode); RUN(test_read_bits_limits);
     RUN(test_history); RUN(test_framing_and_exceptions);
     SUMMARY();
 }

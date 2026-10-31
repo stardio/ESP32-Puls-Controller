@@ -61,6 +61,7 @@ typedef struct {
 FW_INLINE uint32_t fw_w32(const uint16_t *w, unsigned off) { return (uint32_t)w[off] | ((uint32_t)w[off + 1] << 16); }
 FW_INLINE void fw_set32(uint16_t *w, unsigned off, uint32_t v) { w[off] = (uint16_t)v; w[off + 1] = (uint16_t)(v >> 16); }
 
+void fw_cfg_defaults_model(fw_cfg_t *c, bool model_rtu);   /* D-059: defaults + comm_mode = RTU on the RTU model */
 void fw_cfg_defaults(fw_cfg_t *c);               /* all tables' defaults; op accel/decel from default_accel/decel */
 void fw_cfg_seal(fw_cfg_t *c);                   /* set version + crc */
 typedef enum { FW_CFG_OK = 0, FW_CFG_BAD_SIZE, FW_CFG_BAD_VERSION, FW_CFG_BAD_CRC, FW_CFG_BAD_RANGE } fw_cfg_check_t;

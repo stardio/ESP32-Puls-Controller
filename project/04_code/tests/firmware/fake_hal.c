@@ -10,6 +10,8 @@ static uint16_t EDGES[2], IGN[2];
 static bool PREV_STOP[2];
 int FAKE_START_CB_N[2];
 uint32_t FAKE_NOW;
+bool FAKE_RELEASE_FAIL, FAKE_NO_ISR, FAKE_FAULT_BOUND[2];
+int FAKE_RELEASES;
 static void (*CB)(uint8_t);
 
 void fake_reset(void)
@@ -17,6 +19,7 @@ void fake_reset(void)
     memset(FP, 0, sizeof(FP)); memset(FAKE_SERVO, 0, sizeof(FAKE_SERVO)); memset(FAKE_STOP_IN, 0, sizeof(FAKE_STOP_IN));
     memset(PREV_STOP, 0, sizeof(PREV_STOP)); memset(FAKE_START_CB_N, 0, sizeof(FAKE_START_CB_N));
     FP[0].ready = FP[1].ready = true;
+    FAKE_RELEASE_FAIL = false; FAKE_NO_ISR = false; FAKE_FAULT_BOUND[0] = FAKE_FAULT_BOUND[1] = true; FAKE_RELEASES = 0;
     FAKE_IO_READY = true; FAKE_OE = false; FAKE_USER_DO = 0; FAKE_NOW = 0;
     for (int i = 0; i < 2; ++i) { fw_es_init(&FAKE_ES[i]); fw_start_init(&ST[i], false); EDGES[i] = IGN[i] = 0; }
 }
@@ -37,8 +40,9 @@ void fake_stop_isr(uint8_t a)
 void fake_io_ms(uint8_t a, unsigned ms, bool stop_in, bool start_raw)
 {
     for (unsigned i = 0; i < ms; ++i) {
-        if (stop_in && !PREV_STOP[a]) fake_stop_isr(a);
+        if (stop_in && !PREV_STOP[a] && !FAKE_NO_ISR) fake_stop_isr(a);
         PREV_STOP[a] = stop_in; FAKE_STOP_IN[a] = stop_in;
+        if (fw_es_level_guard(&FAKE_ES[a], stop_in)) fw_hal_pulse_stop(a);            /* 1 ms level backup (M-02) */
         if (fw_stopstart_step(&FAKE_ES[a], &ST[a], stop_in, start_raw, 5, &EDGES[a], &IGN[a])) {
             FAKE_START_CB_N[a]++;
             if (CB) CB(a);
@@ -82,13 +86,21 @@ bool fw_hal_stop_latched(uint8_t a) { return FAKE_ES[a].latched != 0; }
 bool fw_hal_stop_blocking(uint8_t a) { return !FAKE_IO_READY || fw_es_blocking(&FAKE_ES[a], FAKE_STOP_IN[a]); }
 uint16_t fw_hal_stop_state(uint8_t a) { return fw_es_state(&FAKE_ES[a], FAKE_STOP_IN[a]); }
 uint16_t fw_hal_stop_trips(uint8_t a) { return FAKE_ES[a].trip_count; }
+int fw_hal_stop_release(uint8_t a)
+{
+    if (FAKE_RELEASE_FAIL) return FW_ES_REFUSED;                  /* recover_from_fault failed: the latch stays */
+    const uint16_t r = fw_es_release(&FAKE_ES[a], FAKE_STOP_IN[a]);
+    if (r == 0) FAKE_RELEASES++;
+    return r;
+}
+bool fw_hal_fault_bound(uint8_t a) { return FAKE_FAULT_BOUND[a]; }
 void fw_hal_set_start_cb(void (*cb)(uint8_t)) { CB = cb; }
 
 uint32_t fw_hal_ms(void) { return FAKE_NOW; }
 void fw_hal_delay_us(uint32_t us) { (void)us; }
 uint16_t fw_hal_reset_reason(void) { return 0; }
 int fw_hal_wdt_init(void) { return 0; }
-void fw_hal_wdt_add_self(void) {}
+int fw_hal_wdt_add_self(void) { return 0; }
 void fw_hal_wdt_feed(void) {}
 void fw_hal_reboot(void) {}
 void fw_hal_mac(uint8_t m[6]) { memset(m, 0, 6); }

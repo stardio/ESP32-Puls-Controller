@@ -48,7 +48,7 @@ int fw_hal_wdt_init(void)
     ESP_LOGI(TAG, "task watchdog %d ms, panic -> reset", CONFIG_FW_WDT_TIMEOUT_MS);
     return 0;
 }
-void fw_hal_wdt_add_self(void) { esp_task_wdt_add(NULL); }
+int fw_hal_wdt_add_self(void) { return esp_task_wdt_add(NULL) == ESP_OK ? 0 : -1; }
 void fw_hal_wdt_feed(void) { esp_task_wdt_reset(); }
 void fw_hal_reboot(void) { esp_restart(); }
 void fw_hal_mac(uint8_t mac[6]) { esp_read_mac(mac, ESP_MAC_ETH); }

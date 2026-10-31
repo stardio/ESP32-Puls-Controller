@@ -166,6 +166,11 @@ void fw_cfg_defaults(fw_cfg_t *c)
     }
     fw_cfg_seal(c);
 }
+void fw_cfg_defaults_model(fw_cfg_t *c, bool model_rtu)
+{
+    fw_cfg_defaults(c);
+    if (model_rtu) { c->net[FW_N_COMM_MODE] = FW_MODE_RTU; fw_cfg_seal(c); }
+}
 
 void fw_cfg_seal(fw_cfg_t *c)
 {

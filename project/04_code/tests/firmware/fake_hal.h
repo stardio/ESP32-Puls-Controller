@@ -16,6 +16,8 @@ extern bool FAKE_STOP_IN[2];
 extern fw_es_t FAKE_ES[2];
 extern int FAKE_START_CB_N[2];
 extern uint32_t FAKE_NOW;
+extern bool FAKE_RELEASE_FAIL, FAKE_NO_ISR, FAKE_FAULT_BOUND[2];   /* recover_from_fault fails / edge ISR missed / MCPWM fault bound */
+extern int FAKE_RELEASES;
 void fake_reset(void);
 void fake_pulses(uint8_t axis, uint32_t n);               /* the engine emitted n pulses (finishes at the target) */
 void fake_stop_isr(uint8_t axis);                         /* STOP input opens: what the ISR does */

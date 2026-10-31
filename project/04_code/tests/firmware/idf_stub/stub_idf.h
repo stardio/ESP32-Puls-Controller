@@ -64,6 +64,10 @@ typedef struct { uint64_t pin_bit_mask; int mode; int pull_up_en, pull_down_en; 
 #define ESP_INTR_FLAG_LEVEL2 4
 #define ESP_INTR_FLAG_LEVEL3 8
 #define ESP_INTR_FLAG_IRAM 0x400
+typedef struct { int owner; } portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED {0}
+void portENTER_CRITICAL(portMUX_TYPE *m); void portEXIT_CRITICAL(portMUX_TYPE *m);
+void portENTER_CRITICAL_ISR(portMUX_TYPE *m); void portEXIT_CRITICAL_ISR(portMUX_TYPE *m);
 esp_err_t gpio_config(const gpio_config_t *c); int gpio_get_level(gpio_num_t g); esp_err_t gpio_set_level(gpio_num_t g, uint32_t v);
 esp_err_t gpio_install_isr_service(int flags); esp_err_t gpio_isr_handler_add(gpio_num_t g, void (*fn)(void *), void *arg);
 

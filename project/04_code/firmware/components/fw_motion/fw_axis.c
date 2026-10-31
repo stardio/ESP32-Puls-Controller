@@ -9,7 +9,9 @@ static uint16_t init_alarm(const fw_axis_t *a)
 {
     const uint16_t b = a->dev->boot_status;
     const uint16_t own = a->idx == 0 ? FW_BOOT_PULSE_X : FW_BOOT_PULSE_Y;
+    const uint16_t fault = a->idx == 0 ? FW_BOOT_FAULT_X : FW_BOOT_FAULT_Y;
     if (!(b & own) || !fw_hal_pulse_ready(a->idx)) return FW_AL_PE_HW;
+    if (!(b & fault)) return FW_AL_PE_HW;                      /* M-06: MCPWM fault path (D-070 path B) not bound: no operation */
     if (!(b & FW_BOOT_CFG_OK)) return FW_AL_PARAM;
     if (!(b & FW_BOOT_NVS)) return FW_AL_NVM;
     if (!(b & FW_BOOT_WDT)) return FW_AL_PE_HW;
@@ -19,11 +21,13 @@ static uint16_t init_alarm(const fw_axis_t *a)
 static bool engine_allowed(const fw_axis_t *a)
 {
     const uint16_t own = a->idx == 0 ? FW_BOOT_PULSE_X : FW_BOOT_PULSE_Y;
-    const uint16_t need = (uint16_t)(FW_BOOT_OPERATE | own);
+    const uint16_t fault = a->idx == 0 ? FW_BOOT_FAULT_X : FW_BOOT_FAULT_Y;
+    const uint16_t need = (uint16_t)(FW_BOOT_OPERATE | own | fault);
     return (a->dev->boot_status & need) == need && fw_hal_pulse_ready(a->idx);
 }
 
 bool fw_axis_running(const fw_axis_t *a) { return a->mv != MV_IDLE; }
+uint16_t fw_axis_sticky_alarm(const fw_axis_t *a) { return a->sticky_alarm; }
 
 void fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz)
 {
@@ -86,7 +90,10 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool rela
     const uint16_t *par = PAR(a);
     const uint16_t *op = OP(a);
     if (!engine_allowed(a)) return reject(a, FW_RES_ALARM, true);
-    if (fw_hal_stop_blocking(a->idx)) return reject(a, FW_RES_ESTOP, true);
+    /* STOP input active, or io not initialised / no STOP input: refuse at once (no side effect). A merely LATCHED STOP
+     * with the input released is handled after all other checks (D-072, below). */
+    if (fw_hal_stop_input(a->idx) || (fw_hal_stop_blocking(a->idx) && !fw_hal_stop_latched(a->idx)))
+        return reject(a, FW_RES_ESTOP, true);
     if (a->sticky_alarm != FW_AL_NONE) return reject(a, FW_RES_ALARM, true);
     if (a->mv != MV_IDLE) return reject(a, FW_RES_RUNNING, false);
     if (par[FW_P_SVON_MODE] == 1 && !t->servo_manual) return reject(a, FW_RES_SERVO_OFF, true);
@@ -98,6 +105,10 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool rela
     if (!fw_ticks_for_freq(a->res_hz, start, FW_MAX_PERIOD_TICKS, &ticks) ||
         !fw_ticks_for_freq(a->res_hz, speed, FW_MAX_PERIOD_TICKS, &ticks))
         return reject(a, FW_RES_RANGE, true);
+
+    /* D-072: every other check passed, so this is a valid explicit start. A latched STOP whose input has been inactive
+     * long enough is released by it; otherwise 0x10 and the latch stays. A rejected command never releases the latch. */
+    if (fw_hal_stop_latched(a->idx) && fw_hal_stop_release(a->idx) != 0) return reject(a, FW_RES_ESTOP, true);
 
     fw_profile_calc(&a->prof, pulses, start, speed, op[FW_O_ACCEL], op[FW_O_DECEL]);
     a->forward_positive = forward;
@@ -223,7 +234,7 @@ uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd)
 void fw_axis_poll(fw_axis_t *a)
 {
     fw_axis_tele_t *t = &TELE(a);
-    const bool latched = fw_hal_stop_latched(a->idx);
+    const bool latched = fw_hal_stop_latched(a->idx) || fw_hal_stop_input(a->idx);   /* M-02: level too, not only the edge latch */
     const bool blocking = fw_hal_stop_blocking(a->idx);
 
     if (a->mv != MV_IDLE) {

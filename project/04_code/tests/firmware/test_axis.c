@@ -13,7 +13,8 @@ static void setup(uint8_t axes)
 {
     fake_reset();
     fw_dev_init(&D, axes, false);
-    D.boot_status = FW_BOOT_PULSE_X | FW_BOOT_PULSE_Y | FW_BOOT_STOP_IO | FW_BOOT_NVS | FW_BOOT_CFG_OK | FW_BOOT_WDT;
+    D.boot_status = FW_BOOT_PULSE_X | FW_BOOT_PULSE_Y | FW_BOOT_STOP_IO | FW_BOOT_NVS | FW_BOOT_CFG_OK | FW_BOOT_WDT |
+                    FW_BOOT_FAULT_X | FW_BOOT_FAULT_Y;
     for (uint8_t a = 0; a < axes; ++a) fw_axis_init(&AX[a], &D, a, 2000000);
     fw_hal_set_start_cb(on_start);
     fw_axis_poll(&AX[0]); if (axes > 1) fw_axis_poll(&AX[1]);
@@ -222,8 +223,7 @@ static void test_stop_latch_and_start_edge(void)
     CHECK_EQ(FAKE_START_CB_N[0], 0);
     fw_axis_poll(&AX[0]);
     CHECK_EQ(D.ax[0].state, FW_AS_ESTOP);                               /* released but latched */
-    CHECK_EQ(fw_axis_start_legacy(&AX[0]), FW_RES_ESTOP);               /* the HMI cannot restart either */
-    CHECK(!fw_axis_running(&AX[0]));
+    CHECK(!fw_axis_running(&AX[0]));                                    /* (D-072: an HMI start now restarts too, see test_d072_*) */
     fake_io_ms(0, 10, false, false);
     fake_io_ms(0, 10, false, true);                                     /* START edge: releases and starts (callback) */
     CHECK_EQ(FAKE_START_CB_N[0], 1);
@@ -236,12 +236,125 @@ static void test_stop_latch_and_start_edge(void)
     CHECK(D.ax[0].status & FW_ASB_POS_INVALID);                         /* position stays invalid until SET_POSITION / HOME */
 }
 
+/* ---- review T-01: D-072 (HMI / Modbus start releases the latch), M-02, M-06 ---- */
+static void latch_x_and_release_input(unsigned stable_ms)
+{
+    setup(2);
+    set_leg(100000, true, 100000, 100, 100);
+    fw_set32(D.cfg.op[0], FW_O_TARGET, 5000);
+    fw_axis_start_legacy(&AX[0]);
+    fake_pulses(0, 1000);
+    fake_io_ms(0, 3, true, false);                                      /* STOP opens -> latch */
+    fw_axis_poll(&AX[0]);
+    fake_io_ms(0, stable_ms, false, false);                             /* contact closed again, START not pressed */
+}
+
+static void test_d072_hmi_start_releases_latch(void)
+{
+    latch_x_and_release_input(12);
+    CHECK(fw_hal_stop_latched(0)); CHECK_EQ(FAKE_START_CB_N[0], 0);
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_ALARM_RESET), FW_RES_ESTOP);   /* no reset command for the latch (D-058) */
+    CHECK(fw_hal_stop_latched(0));
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_OK);     /* HMI start, 12 ms after the release */
+    CHECK(!fw_hal_stop_latched(0)); CHECK(fw_axis_running(&AX[0])); CHECK(FP[0].active);
+    CHECK_EQ(FAKE_RELEASES, 1);
+    fw_axis_poll(&AX[0]);
+    CHECK_EQ(D.ax[0].alarm_code, FW_AL_NONE);
+
+    latch_x_and_release_input(12);                                      /* legacy coil 0 path */
+    CHECK_EQ(fw_axis_start_legacy(&AX[0]), FW_RES_OK);
+    CHECK(!fw_hal_stop_latched(0)); CHECK(FP[0].active);
+
+    latch_x_and_release_input(12);                                      /* START_ABS (position is invalid after a STOP: needs require_home=0) */
+    D.cfg.par[0][FW_P_REQUIRE_HOME] = 0;
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_ABS), FW_RES_OK);
+    CHECK(!fw_hal_stop_latched(0)); CHECK(FP[0].active);
+
+    latch_x_and_release_input(12);                                      /* the other axis is untouched by all of this */
+    CHECK(!fw_hal_stop_latched(1));
+}
+
+static void test_d072_refusals_keep_latch(void)
+{
+    latch_x_and_release_input(5);                                       /* input inactive only 5 ms: not yet stable */
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_ESTOP);
+    CHECK(fw_hal_stop_latched(0)); CHECK(!FP[0].active); CHECK_EQ(FAKE_RELEASES, 0);
+    fake_io_ms(0, 6, false, false);                                     /* now 11 ms: accepted */
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_OK);
+    CHECK(!fw_hal_stop_latched(0));
+
+    latch_x_and_release_input(20);                                      /* input active again: refused, latch stays */
+    FAKE_STOP_IN[0] = true;
+    CHECK_EQ(fw_axis_start_legacy(&AX[0]), FW_RES_ESTOP);
+    CHECK(fw_hal_stop_latched(0)); CHECK(!FP[0].active);
+    FAKE_STOP_IN[0] = false;
+
+    latch_x_and_release_input(20);                                      /* other reasons refuse first and keep the latch */
+    D.cfg.par[0][FW_P_SVON_MODE] = 1; D.ax[0].servo_manual = false;     /* servo OFF in manual mode */
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_SERVO_OFF);
+    CHECK(fw_hal_stop_latched(0));
+    D.cfg.par[0][FW_P_SVON_MODE] = 0;
+    fw_set32(D.cfg.op[0], FW_O_TARGET, 0);                              /* REL with target 0: range error */
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_RANGE);
+    CHECK(fw_hal_stop_latched(0));
+    D.ax[0].alarm_count = 0; AX[0].sticky_alarm = FW_AL_PARAM;          /* sticky alarm */
+    fw_set32(D.cfg.op[0], FW_O_TARGET, 5000);
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_ALARM);
+    CHECK(fw_hal_stop_latched(0)); CHECK_EQ(FAKE_RELEASES, 0);
+}
+
+static void test_m02_level_backup_without_isr(void)
+{
+    setup(2);
+    set_leg(100000, true, 100000, 100, 100);
+    fw_axis_start_legacy(&AX[0]);
+    fake_pulses(0, 500);
+    FAKE_NO_ISR = true;                                                 /* the edge was missed: only the level is active */
+    fake_io_ms(0, 1, true, false);                                      /* one 1 ms watch pass */
+    CHECK(fw_hal_stop_latched(0)); CHECK(!FP[0].active);                /* latched and cut within 1 ms */
+    CHECK_EQ(fw_hal_stop_trips(0), 1);
+    fake_pulses(0, 100);
+    fw_axis_poll(&AX[0]);
+    CHECK(!fw_axis_running(&AX[0])); CHECK_EQ(D.ax[0].state, FW_AS_ESTOP); CHECK_EQ(D.ax[0].pulses_done, 500);
+    /* the axis task alone (watch task not running): input active but not latched still stops the axis */
+    setup(2);
+    set_leg(100000, true, 100000, 100, 100);
+    fw_axis_start_legacy(&AX[0]);
+    fake_pulses(0, 300);
+    FAKE_STOP_IN[0] = true;                                             /* no ISR, no watch pass */
+    fw_axis_poll(&AX[0]);
+    CHECK(!fw_axis_running(&AX[0])); CHECK(!FP[0].active); CHECK_EQ(D.ax[0].leg_result, 2); CHECK_EQ(D.ax[0].pulses_done, 300);
+    CHECK(D.ax[1].state != FW_AS_ESTOP);
+}
+
+static void test_m06_fault_path(void)
+{
+    latch_x_and_release_input(20);                                      /* recover_from_fault fails: latch stays, 0x10 */
+    FAKE_RELEASE_FAIL = true;
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_ESTOP);
+    CHECK(fw_hal_stop_latched(0)); CHECK(!FP[0].active); CHECK_EQ(FP[0].starts, 1);   /* only the first (pre-STOP) start */
+    FAKE_RELEASE_FAIL = false;
+    CHECK_EQ(fw_axis_command(&AX[0], FW_CMD_START_REL), FW_RES_OK);     /* works again once the recovery works */
+
+    setup(2);                                                           /* fault path of X not bound: X never runs, Y does */
+    D.boot_status &= (uint16_t)~FW_BOOT_FAULT_X;
+    set_leg(1000, true, 10000, 100, 100);
+    fw_axis_poll(&AX[0]); fw_axis_poll(&AX[1]);
+    CHECK_EQ(fw_axis_start_legacy(&AX[0]), FW_RES_ALARM);
+    CHECK_EQ(D.ax[0].alarm_code, FW_AL_PE_HW); CHECK(!(D.ax[0].status & FW_ASB_READY)); CHECK(D.ax[0].status & FW_ASB_ALARM);
+    CHECK_EQ(FP[0].starts, 0);
+    fw_set32(D.cfg.op[1], FW_O_SPEED, 20000); fw_set32(D.cfg.op[1], FW_O_TARGET, 100);
+    CHECK_EQ(fw_axis_command(&AX[1], FW_CMD_START_REL), FW_RES_OK);
+    CHECK(D.ax[1].status & FW_ASB_READY || D.ax[1].status & FW_ASB_BUSY);
+}
+
 static void test_stop_active_at_boot(void)
 {
     fake_reset();
     fake_stop_isr(0);
     fw_dev_init(&D, 2, false);
-    D.boot_status = FW_BOOT_PULSE_X | FW_BOOT_PULSE_Y | FW_BOOT_STOP_IO | FW_BOOT_NVS | FW_BOOT_CFG_OK | FW_BOOT_WDT;
+    D.boot_status = FW_BOOT_PULSE_X | FW_BOOT_PULSE_Y | FW_BOOT_STOP_IO | FW_BOOT_NVS | FW_BOOT_CFG_OK | FW_BOOT_WDT |
+                    FW_BOOT_FAULT_X | FW_BOOT_FAULT_Y;
     fw_axis_init(&AX[0], &D, 0, 2000000); fw_axis_init(&AX[1], &D, 1, 2000000);
     fw_axis_poll(&AX[0]); fw_axis_poll(&AX[1]);
     CHECK_EQ(D.ax[0].state, FW_AS_ESTOP);
@@ -374,7 +487,8 @@ int main(void)
 {
     RUN(test_legacy_move); RUN(test_reverse_and_dir_invert); RUN(test_pulse_mismatch); RUN(test_limits_and_rejections);
     RUN(test_abs_rel_and_position); RUN(test_decel_stop); RUN(test_quick_stop); RUN(test_stop_latch_and_start_edge);
-    RUN(test_stop_active_at_boot); RUN(test_start_physical_y); RUN(test_servo_modes); RUN(test_init_failures);
+    RUN(test_stop_active_at_boot); RUN(test_d072_hmi_start_releases_latch); RUN(test_d072_refusals_keep_latch);
+    RUN(test_m02_level_backup_without_isr); RUN(test_m06_fault_path); RUN(test_start_physical_y); RUN(test_servo_modes); RUN(test_init_failures);
     RUN(test_commloss_stop_and_alarm_reset); RUN(test_unsupported_and_profile_failure); RUN(test_one_axis_build);
     SUMMARY();
 }

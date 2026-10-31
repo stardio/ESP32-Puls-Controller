@@ -3,7 +3,7 @@
  * Source: project/04_code/test-fw/components/tfw_estop_io/tfw_estop_io.c (reviewed: M-01 ISR in IRAM, M-03 ISR level,
  * M-04 STOP active at boot latches, N-02 init failure refuses motion, N-03 latch before stop). Differences: pins from the
  * product Kconfig (X: STOP 19 / START 54, Y: STOP 8 / START 7), no statistics / debug / path selection (both paths
- * always on), release only by a START edge, spare DI 18/17/15/16 read-only.
+ * always on), release only by an explicit start (D-072: START edge or HMI/Modbus command), spare DI 18/17/15/16 read-only.
  * NOT verified on hardware. Open API question carried over from test-fw: exact behaviour of
  * mcpwm_operator_set_brake_on_fault / recover_from_fault (IDF 5.5.3 headers not available here). */
 #include <string.h>
@@ -34,6 +34,7 @@ static uint16_t s_start_edges[NAX], s_start_ignored[NAX];
 static uint8_t s_axis_count;
 static bool s_oe_allowed;
 static uint16_t s_do_state, s_user_do;
+static portMUX_TYPE s_stop_mux = portMUX_INITIALIZER_UNLOCKED;   /* latch set (ISR / level guard) vs latch release (task) */
 
 /* ------------------------------------------------------------------ output enable GPIO33 */
 static inline int oe_level(bool allow) { return (allow != (FW_B_OE_ACTIVE_LOW != 0)) ? 1 : 0; }
@@ -101,16 +102,40 @@ void fw_hal_set_start_cb(void (*cb)(uint8_t axis)) { s_start_cb = cb; }
 static void IRAM_ATTR stop_isr(void *arg)
 {
     const uint8_t ax = (uint8_t)(uintptr_t)arg;
+    portENTER_CRITICAL_ISR(&s_stop_mux);
     if (!s_es[ax].latched) fw_es_trip(&s_es[ax], 0u);
+    portEXIT_CRITICAL_ISR(&s_stop_mux);
     fw_hal_pulse_stop(ax);
 }
 
-static void release_hw(uint8_t ax)
+bool fw_hal_fault_bound(uint8_t axis) { return axis < NAX && s_bound[axis]; }
+
+/* false = the brake could not be cleared: the caller must keep/restore the latch (review M-06) */
+static bool release_hw(uint8_t ax)
 {
-    if (s_bound[ax]) {
-        esp_err_t e = mcpwm_operator_recover_from_fault(fw_port_operator(ax), s_fault[ax]);
-        if (e != ESP_OK) ESP_LOGW(TAG, "axis %u: recover from fault 0x%x", (unsigned)(ax + 1), (unsigned)e);
-    }
+    if (!s_bound[ax]) return true;                      /* nothing to recover; an unbound axis is not allowed to run anyway */
+    esp_err_t e = mcpwm_operator_recover_from_fault(fw_port_operator(ax), s_fault[ax]);
+    if (e != ESP_OK) ESP_LOGW(TAG, "axis %u: recover from fault 0x%x: latch kept", (unsigned)(ax + 1), (unsigned)e);
+    return e == ESP_OK;
+}
+
+static void relatch(uint8_t ax)
+{
+    portENTER_CRITICAL(&s_stop_mux);
+    if (!s_es[ax].latched) fw_es_trip(&s_es[ax], 0u);
+    portEXIT_CRITICAL(&s_stop_mux);
+    fw_hal_pulse_stop(ax);
+}
+
+int fw_hal_stop_release(uint8_t ax)
+{
+    if (!s_init_ok || ax >= NAX || s_stop_gpio[ax] < 0) return FW_ES_REFUSED;
+    portENTER_CRITICAL(&s_stop_mux);
+    const uint16_t r = fw_es_release(&s_es[ax], fw_hal_stop_input(ax));
+    portEXIT_CRITICAL(&s_stop_mux);
+    if (r != 0) return (int)r;
+    if (!release_hw(ax)) { relatch(ax); return FW_ES_REFUSED; }
+    return 0;
 }
 
 /* one 1 ms pass over the axes; also the place where a released latch is accepted */
@@ -121,9 +146,16 @@ static void poll_once(void)
         const bool was_latched = s_es[ax].latched != 0;
         const bool stop_in = fw_hal_stop_input(ax);
         const bool start_raw = s_start_gpio[ax] >= 0 && level_active(s_start_gpio[ax], FW_B_START_ACTIVE_LOW != 0);
-        const bool fire = fw_stopstart_step(&s_es[ax], &s_st[ax], stop_in, start_raw, CONFIG_FW_START_DEBOUNCE_MS,
-                                            &s_start_edges[ax], &s_start_ignored[ax]);
-        if (was_latched && !s_es[ax].latched) release_hw(ax);        /* START edge released the latch */
+        /* review M-02: level backup of the edge ISR. Input active but no latch -> latch and cut this axis now */
+        portENTER_CRITICAL(&s_stop_mux);
+        const bool tripped = fw_es_level_guard(&s_es[ax], stop_in);
+        portEXIT_CRITICAL(&s_stop_mux);
+        if (tripped) fw_hal_pulse_stop(ax);
+        portENTER_CRITICAL(&s_stop_mux);                             /* same mutual exclusion as the ISR (M-01) */
+        bool fire = fw_stopstart_step(&s_es[ax], &s_st[ax], stop_in, start_raw, CONFIG_FW_START_DEBOUNCE_MS,
+                                      &s_start_edges[ax], &s_start_ignored[ax]);
+        portEXIT_CRITICAL(&s_stop_mux);
+        if (was_latched && !s_es[ax].latched && !release_hw(ax)) { relatch(ax); fire = false; }   /* START edge released the latch */
         if (s_es[ax].latched && fw_hal_pulse_active(ax)) fw_hal_pulse_stop(ax);   /* a latched axis never keeps running */
         if (fire && s_start_cb) s_start_cb(ax);
     }
@@ -185,15 +217,13 @@ static esp_err_t io_init_body(uint8_t axis_count)
             e = mcpwm_generator_set_action_on_brake_event(fw_port_generator(g),
                     MCPWM_GEN_BRAKE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_OPER_BRAKE_MODE_OST, MCPWM_GEN_ACTION_LOW));
         if (e == ESP_OK) s_bound[g] = true;
-        else ESP_LOGE(TAG, "axis %u: MCPWM fault path FAILED (%s): software path only", (unsigned)(g + 1), esp_err_to_name(e));
+        else ESP_LOGE(TAG, "axis %u: MCPWM fault path FAILED (%s): axis operation PROHIBITED (boot_status fault bit stays 0)", (unsigned)(g + 1), esp_err_to_name(e));
     }
 
-    /* STOP ISR: highest level of the three ISRs (M-03); IRAM flag only in the IRAM-safe build (M-01) */
+    /* STOP ISR: highest level of the three ISRs (M-03); always in IRAM (review m-05: independent of the PCNT option) */
     int flags = (CONFIG_FW_IRQ_PRIO_STOP == 3) ? ESP_INTR_FLAG_LEVEL3 : (CONFIG_FW_IRQ_PRIO_STOP == 2) ? ESP_INTR_FLAG_LEVEL2 :
                 (CONFIG_FW_IRQ_PRIO_STOP == 1) ? ESP_INTR_FLAG_LEVEL1 : 0;
-#if CONFIG_PCNT_ISR_IRAM_SAFE
     flags |= ESP_INTR_FLAG_IRAM;
-#endif
     bool service_checked = false;
     for (uint8_t g = 0; g < axis_count; ++g) {
         e = in_cfg(s_stop_gpio[g], stop_low, stop_low ? GPIO_INTR_NEGEDGE : GPIO_INTR_POSEDGE);

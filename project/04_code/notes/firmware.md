@@ -39,12 +39,12 @@ servo1axis의 `app_main → motion → Modbus` 구조를 따르고, 하드웨어
 ## 3. 구현 요약
 
 - **축:** X(펄스 25/방향 32), Y(펄스 20/방향 21). 공용 출력 인에이블 GPIO33(HIGH=허용). 축마다 위치(펄스 수)·속도·가감속, 방향, 사다리꼴/삼각형 프로파일, 시작 주파수 자동 계산(수동 `start_speed`≠0이면 그 값). 위치는 소프트웨어로 추적(펄스 수 × 방향). `FW_AXIS_COUNT=1`이면 Y 자원(MCPWM 그룹 1, PCNT, STOP/START/DI, DO2)을 만들지 않고 0x2000 영역은 예외 02.
-- **STOP(D-058):** NC 접점, 기본 활성 HIGH(`FW_STOP_ACTIVE_LOW=n`). 축별 GPIO ISR(경로 A: 래치 후 해당 축 `force LOW`)과 MCPWM GPIO fault(경로 B)를 모두 쓴다. 다른 축과 GPIO33은 건드리지 않는다. 래치는 **START 엣지로만** 해제(입력이 10 ms 이상 비활성일 때). STOP 활성·래치 중 START(물리/HMI)는 거부, 누른 채 해제해도 재기동 없음. HMI 정지(`STOP` 명령/코일)는 설정 감속 시간으로 감속 정지, `QUICK_STOP`은 즉시.
+- **STOP(D-058):** NC 접점, 기본 활성 HIGH(`FW_STOP_ACTIVE_LOW=n`). 축별 GPIO ISR(경로 A: 래치 후 해당 축 `force LOW`)과 MCPWM GPIO fault(경로 B)를 모두 쓴다. 다른 축과 GPIO33은 건드리지 않는다. 래치는 **D-072**에 따라 STOP 입력이 10 ms 이상 비활성인 상태의 명시적 시작(물리 START 엣지, HMI/Modbus의 START_ABS/START_REL, 레거시 코일 0)으로 해제되고 그 시작이 실행된다. 해제 검사는 다른 모든 거부 조건(알람·서보 OFF·범위) 뒤에 있어, 거부되는 명령은 래치를 풀지 않는다. STOP 입력 활성 중, 해제 10 ms 미만, MCPWM fault 복구 실패 시에는 0x10 거부 + 래치 유지(복구 실패 시 래치를 다시 세움). `ESTOP_RELEASE`·`ALARM_RESET`은 래치를 풀지 않는다(거부). 누른 채 해제해도 재기동 없음. 래치 설정(ISR, 1 ms 레벨 감시)과 해제는 같은 `portMUX`로 보호. **레벨 감시(M-02):** 1 ms 감시 태스크가 입력 활성인데 래치가 없으면 래치+해당 축 펄스 차단, `fw_axis_poll`도 입력 레벨을 본다. HMI 정지(`STOP` 명령/코일)는 설정 감속 시간으로 감속 정지, `QUICK_STOP`은 즉시.
 - **START:** 엣지, 활성 LOW, 5 ms 디바운스, 부팅 시 눌려 있어도 엣지 아님. Kconfig `FW_*_START_GPIO=-1`이면 START 입력 없음. 내부 풀업으로 무입력은 "안 눌림".
 - **I/O:** 서보 ON X=DO1(23), Y=DO2(26). DO3(27)/DO4(46)는 `0x0120`(b0/b1)로 제어. 예비 DI 18·17·15·16은 읽어서 `di_raw`(0x0031)로만 노출.
 - **Modbus:** interface-spec §5 구현(§4 레지스터 요약 참조). 레거시 창은 X축의 별칭(속도·가감속은 축 영역과 같은 저장소). FC 01/02/03/04/05/06/15/16. 모든 쓰기는 후보 이미지에서 검증한 뒤 한 번에 반영(실패 시 변경·명령 없음).
-- **통신 모드(D-056, D-059):** `comm_mode`(0x400E, 0=TCP, 1=RTU)를 NVS에 저장, **재부팅 후 적용**. 출하 기본값 TCP. `FW_MODEL_RTU=n` 모델은 RTU 쓰기를 예외 03으로 거부하고, 저장값이 RTU여도 부팅 때 TCP로 되돌린다(`boot_status` b8). 선택된 쪽만 시작(RTU 모드에서는 이더넷도 올리지 않음).
-- **저장:** 레지스터 쓰기는 RAM만 바꾸고 변경이 있을 때만 "미저장" 표시. 마지막 쓰기 2 s 후(`auto_save`=1) 또는 `SAVE` 명령에서 **축이 정지 중일 때만** NVS 한 덩어리(CRC32 + 버전)로 기록. 저장 중 START 거부. 쓰기 실패 시 `E-NVM`(0x0702) 이력 + `sys_status` b5.
+- **통신 모드(D-056, D-059):** `comm_mode`(0x400E, 0=TCP, 1=RTU)를 NVS에 저장, **재부팅 후 적용**. 출하 기본값은 모델별(D-059): TCP 모델=TCP, `FW_MODEL_RTU=y` 모델=RTU(`fw_cfg_defaults_model`, 첫 부팅·설정 손상·`LOAD_DEFAULT` 모두). 네트워크 워드(0x4000~0x400E) 쓰기는 `unlock_key` 후에만 가능하고(없으면 예외 03, 변경 없음), 네트워크만 바뀐 쓰기는 자동 저장을 요청하지 않는다(`NET_APPLY` 0x400F 또는 `SAVE`로 저장). `FW_MODEL_RTU=n` 모델은 RTU 쓰기를 예외 03으로 거부하고, 저장값이 RTU여도 부팅 때 TCP로 되돌린다(`boot_status` b8). 선택된 쪽만 시작(RTU 모드에서는 이더넷도 올리지 않음).
+- **저장:** 레지스터 쓰기는 RAM만 바꾸고 변경이 있을 때만 "미저장" 표시. 마지막 쓰기 2 s 후(`auto_save`=1) 또는 `SAVE` 명령에서 **축이 정지 중일 때만** NVS 한 덩어리(CRC32 + 버전)로 기록. 저장·재부팅 결정은 락 안에서 `s_saving`/`s_reboot_commit`을 세워(M-03) 판단과 실행 사이에 START가 끼어들 수 없다. 저장 중 물리 START는 버리지 않고 보류한다(m-04). 쓰기 실패 시 `E-NVM`(0x0702) 이력 + `sys_status` b5.
 - **안전:** 부팅 중 GPIO33 LOW(app_main 첫 문장), 모든 필수 초기화(WDT·NVS·설정 CRC·축별 펄스·STOP 입력)가 성공해야 HIGH. 실패 시 해당 알람(0x0602 펄스 엔진, 0x0701 설정 손상, 0x0702 NVM, STOP 입력 실패는 비상정지로 표시)과 시작 거부 0x11/0x10. 설정 손상은 기본값을 올리고 "SAVE 성공" 전까지 기동 금지. ISR은 IRAM, DRAM 정적 변수만, RTOS API 없음(M-01 계승). 태스크 WDT(운전 태스크만 구독, 1000 ms, 패닉 = 리셋) + 인터럽트 WDT 300 ms. 리셋 원인은 `reset_reason`(0x002C), WDT 리셋이면 이력에 E-WDT(0x0801) 한 건.
 
 ## 4. HMI 화면 데이터에 필요한 레지스터 요약
@@ -58,7 +58,7 @@ servo1axis의 `app_main → motion → Modbus` 구조를 따르고, 하드웨어
 | 운전 조작 | B+0x040 axis_command(1 ABS, 2 REL, 3 STOP, 5 ALARM_RESET, 6/7 서보, 11 SET_POSITION, 12 QUICK_STOP), B+0x042 목표 S32, +0x044 속도 U32, +0x046/+0x047 가감속 ms U16. 코일 0x10×n+2 STOP, +3 서보. 0x0100 sys_command(2 SAVE, 3 LOAD_DEFAULT*, 4 REBOOT*, 5 이력 삭제, 6 STOP_ALL), 0x0101 결과, 0x0102 unlock_key(0x4D56, 10 s) | *잠금 필요. HOME(4), JOG(8~10)는 v1 미구현 → 예외 03 + cmd_result 0x17 |
 | 파라미터 | B+0x100~0x12B(44워드 한 번에 읽기), 시스템 0x0110~0x0114 | 구현 값만 허용하도록 범위 좁힘(§6) |
 | I/O 표시 | 0x0031 di_raw(b0 X START, b1 X STOP, b2 DI3, b3 DI4, b4 Y START, b5 Y STOP, b6 DI7, b7 DI8; 1=활성), 0x0032 do_state(b0 DO1 … b3 DO4), 0x0120 DO3/DO4 쓰기 | 신규 주소 |
-| 진단·알람 | 0x002C reset_reason(0 불명, 1 전원, 2 SW, 3 패닉, 4 INT WDT, 5 TASK WDT, 6 기타 WDT, 7 브라운아웃, 8 딥슬립, 9 외부, 10 기타), 0x002D boot_status, 0x002E 실제 통신 모드, 0x0030 alarm_axis_mask, 0x3000 이력 건수, 0x3010+4i 이력(코드, 축, 시각 U32), B+0x200 알람 | boot_status: b0 X 펄스, b1 Y 펄스, b2 STOP 입력, b3 NVS, b4 설정 CRC, b5 WDT, b8 모드 되돌림, b9 GPIO33 허용 중 |
+| 진단·알람 | 0x002C reset_reason(0 불명, 1 전원, 2 SW, 3 패닉, 4 INT WDT, 5 TASK WDT, 6 기타 WDT, 7 브라운아웃, 8 딥슬립, 9 외부, 10 기타), 0x002D boot_status, 0x002E 실제 통신 모드, 0x0030 alarm_axis_mask, 0x3000 이력 건수, 0x3010+4i 이력(코드, 축, 시각 U32), B+0x200 알람 | boot_status: b0 X 펄스, b1 Y 펄스, b2 STOP 입력, b3 NVS, b4 설정 CRC, b5 WDT, b6 X 축 MCPWM fault 경로 묶임, b7 Y 축 fault 경로 묶임(0이면 그 축은 운전 금지, 알람 0x0602), b8 모드 되돌림, b9 GPIO33 허용 중 |
 | 네트워크 | 0x4000 IP U32(0xC0A800DC = 192.168.0.220), 0x4002 마스크, 0x4004 게이트웨이, 0x4006 유닛 ID, 0x4007 MAC 3워드(읽기), 0x400A RTU 보율÷100, 0x400B 패리티(0 없음, 1 짝, 2 홀), 0x400C RTU 주소, 0x400E comm_mode, 0x400F net_apply(1 = 저장, 잠금 필요) | 변경은 재부팅 후 적용 |
 
 알람 코드: 0x0101 비상정지(해당 축), 0x0401 통신두절, 0x0602 펄스 엔진/WDT 초기화 실패, 0x0701 설정 손상, 0x0702 NVM, 0x0801 WDT 리셋 이력.
@@ -73,7 +73,7 @@ servo1axis의 `app_main → motion → Modbus` 구조를 따르고, 하드웨어
 | R4 | START | 활성 LOW, 내부 풀업, 5 ms 디바운스 | test-fw 권고값 계승. 보드 극성은 미실측 |
 | R5 | STOP | 활성 HIGH(NC 접점 개방), 해제 안정 10 ms | 기준선 §3, test-fw 계승 |
 | R6 | 물리 START 동작 | X: 레거시 START와 동일(`legacy_move_pulses`, 방향 코일). Y: `START_REL`(`target_position`의 부호 = 방향) | D-050은 "엣지로 펄스열 시작"만 정함. 기존 사다리의 동작을 X에 그대로 둠 |
-| R7 | `ESTOP_RELEASE`(0x0100=1) | 항상 거부(결과 0x10) | D-058 "래치·리셋 명령 없음"이 interface-spec FR-010보다 우선(기준선 §3). §7 이슈 1 |
+| R7 | `ESTOP_RELEASE`(0x0100=1) | 항상 거부(결과 0x10). 복구는 D-072의 시작 명령 | D-058·D-072: 별도 해제 명령 없음. §7 이슈 1 |
 | R8 | 위치 유효성 | 부팅·STOP 트립 후 무효, `require_home`=1이면 ABS 거부(0x16). `SET_POSITION`이 유효로 되돌림, REL은 항상 가능 | HOME 미구현이므로 ABS를 쓸 수 있는 유일한 경로 |
 | R9 | 서보 ON | `svon_mode`=0 이동 중 자동 ON/끝나면 OFF, 코일·SERVO_ON 명령은 수동 유지(양 모드). 모드 1은 수동 ON 없으면 START 거부(0x12) | 기준선 §3 DC-18 |
 | R10 | 이동 속도 한도 | 레거시 창에서 쓴 값은 100~1,000,000 Hz, 축 영역에서 쓴 값은 `max_speed`(기본 100,000) 이하 | 레거시 우선(기존 1 MHz 실적), 축 영역은 스펙 |
@@ -99,7 +99,7 @@ servo1axis의 `app_main → motion → Modbus` 구조를 따르고, 하드웨어
 
 ## 7. 이슈 제기
 
-1. **D-058 vs interface-spec FR-010:** 스펙은 `ESTOP_RELEASE`(sys_command 1)를 두지만 기준선은 "래치·리셋 명령 없음, START 엣지로만"이다. 기준선을 따라 거부로 구현했다. START 입력이 배선되지 않은 장치는 STOP 래치 후 재부팅 외에 복구 수단이 없다 → 설계 확인 필요(HMI 해제를 허용할지).
+1. **(종결, D-072 반영)** 시작 명령이 래치를 푼다. 남은 문서 불일치(메인 세션): interface-spec §5.3 `estop_state`=2 "해제 명령 대기", sys_command 1 ESTOP_RELEASE, §5.8 0x0101 "입력 해제 + ESTOP_RELEASE"는 D-072와 맞지 않는다.
 2. **물리 START의 Y축 의미(R6)**와 서보 ON 선행 시간: 스펙에 서보 ON 후 펄스 출력까지의 지연이 없다(많은 드라이브가 수십 ms 필요). 현재 0 ms. 드라이브 사양 확인 후 파라미터 추가 여부 결정.
 3. **보드:** 기준선 §4의 축별 AND 게이트(D-070)가 없으면 STOP 하드웨어 차단은 MCPWM fault 경로에 달려 있다. 이 경로의 IDF 동작(아래 §8)이 확인되기 전에는 소프트웨어 ISR 경로가 유일한 보증이다.
 4. **스펙 보완:** `rtu_baud` 인코딩(R12), 신규 주소 7개(§6), `default_accel/decel_ms` 의미(R18), 위치 무효·`require_home` 기본 1에서 ABS 사용 절차(R8).
@@ -135,19 +135,64 @@ idf.py build
 idf.py -p <포트> flash monitor             # 플래시는 사용자가 실행
 ```
 
-모델 4종: `sdkconfig.model_{1axis,2axis}_{tcp,rtu}`. 출하 기본 통신 모드는 모델과 무관하게 TCP(RTU는 RS-485 실장 모델에서 `0x400E`=1 + 재부팅). 첫 부팅 로그에서 `boot_status`, `reset reason`, STOP 레벨(`ACTIVE at boot`가 없는지)을 확인한다. 첫 HIL 순서 권고: GPIO33 LOW 확인(전원 투입 직후) → U4 → STOP 응답(T-07) → 단축 이동 펄스 수 → 2축 동시.
+D-059에 따라 RTU 모델의 출하 기본 통신 모드는 RTU다. 모델 4종: `sdkconfig.model_{1axis,2axis}_{tcp,rtu}`. 출하 기본 통신 모드는 TCP 모델=TCP, RTU 모델=RTU(D-059). 변경은 잠금 해제 후 `0x400E` 쓰기 + `0x400F`=1 + 재부팅. 첫 부팅 로그에서 `boot_status`, `reset reason`, STOP 레벨(`ACTIVE at boot`가 없는지)을 확인한다. 첫 HIL 순서 권고: GPIO33 LOW 확인(전원 투입 직후) → U4 → STOP 응답(T-07) → 단축 이동 펄스 수 → 2축 동시.
 
 ## 10. 호스트 시험 결과 (그대로)
+
+리뷰 1차 반영 후 재실행(2026-10-31, `make clean` 후): `make run` = test_core 8,689 / test_regmap 459 / test_axis 259 checks, 0 failures; pytest 32 passed. 반영 전: 8,689/424/204, 31 passed. 아래는 항목별 설명.
 
 실행: `make -C project/04_code/tests/firmware run` 과 `cd project/04_code/tests/firmware && python3 -I -m pytest -q test_cfg_syntax.py` (2026-10-31, gcc, Python 3.13).
 
 | 시험 | 대상 | 결과 |
 |---|---|---|
 | `test_core.c` 23개 시험 | 주기 계산(요청 초과 없음, 저주파 거부), 시작 속도, 사다리꼴(1 MHz 실적 값), 삼각형, 감속 정지 재계획, CRC, STOP/START 상태 기계(래치·해제·무시·누른 채 해제·디바운스·부팅 시 활성·축 독립), 파라미터 범위 경계·교차 규칙·네트워크 검증, 모드 선택, 설정 무결성, 지연 저장, 통신두절, 핀 중복, 리셋 원인 | 8,689 checks, **0 failures** |
-| `test_regmap.c` 14개 시험 | 레거시 창 읽기·쓰기·코일·DI, 시스템 영역, 축 영역 배치(S32, 하위 워드 우선), 1축 모델의 축2 예외, 원자성(실패 시 변경·명령 없음), 명령 라우팅, 미구현 명령, 변경 알림(같은 값 재쓰기는 저장 요청 없음), 네트워크·모드(TCP 모델은 RTU 거부), 이력, 프레이밍·예외 | 424 checks, **0 failures** |
-| `test_axis.c` 15개 시험 (가짜 HAL) | 레거시 이동·방향·dir_invert, 펄스 불일치, 한도, ABS/REL/위치, 감속 정지, 즉시 정지, 축별 STOP 래치와 START 엣지 재기동, 부팅 시 STOP, Y 물리 START, 서보 모드, 초기화 실패 4종(펄스·설정·STOP 입력·WDT·NVS), 통신두절 정지·알람 해제, 프로파일 갱신 실패, 1축 빌드 | 204 checks, **0 failures** |
-| `test_cfg_syntax.py` (pytest) | 전체 C 파일을 IDF 스텁에 대해 `gcc -fsyntax-only`, sdkconfig 조합 9종 + 모델 조각 4종(bool n은 정의하지 않는 IDF 규칙), `fw_cfg.h` 매크로 정적 단언, 음성 대조(미정의 bool을 값으로 쓰면 실패), bool은 `#if` 줄에만, 쓰인 CONFIG 전부 Kconfig 선언, 기본 핀이 기준선 신호표와 일치·중복 없음, `sdkconfig.defaults` 형식과 안전 옵션, `app_main` 첫 호출이 `fw_hal_oe_early_forbid` | 31 passed |
+| `test_regmap.c` 16개 시험 | 레거시 창 읽기·쓰기·코일·DI, 시스템 영역, 축 영역 배치(S32, 하위 워드 우선), 1축 모델의 축2 예외, 원자성(실패 시 변경·명령 없음), 명령 라우팅, 미구현 명령, 변경 알림(같은 값 재쓰기는 저장 요청 없음), 네트워크·모드(TCP 모델은 RTU 거부), 이력, 프레이밍·예외 | 459 checks, **0 failures** |
+| `test_axis.c` 19개 시험 (가짜 HAL) | 레거시 이동·방향·dir_invert, 펄스 불일치, 한도, ABS/REL/위치, 감속 정지, 즉시 정지, 축별 STOP 래치와 START 엣지 재기동, 부팅 시 STOP, Y 물리 START, 서보 모드, 초기화 실패 4종(펄스·설정·STOP 입력·WDT·NVS), 통신두절 정지·알람 해제, 프로파일 갱신 실패, 1축 빌드 | 259 checks, **0 failures** |
+| `test_cfg_syntax.py` (pytest) | 전체 C 파일을 IDF 스텁에 대해 `gcc -fsyntax-only`, sdkconfig 조합 9종 + 모델 조각 4종(bool n은 정의하지 않는 IDF 규칙), `fw_cfg.h` 매크로 정적 단언, 음성 대조(미정의 bool을 값으로 쓰면 실패), bool은 `#if` 줄에만, 쓰인 CONFIG 전부 Kconfig 선언, 기본 핀이 기준선 신호표와 일치·중복 없음, `sdkconfig.defaults` 형식과 안전 옵션, `app_main` 첫 호출이 `fw_hal_oe_early_forbid` | 32 passed |
 
 개발 중 시험이 잡은 것(수정 후 재실행, 시험을 지우지 않음): ① `rtu_baud` 115200이 U16에 안 들어감 → ÷100 인코딩(R12). ② 감속 정지 중 상태가 알람보다 우선해야 하는데 반대였음(`fw_axis.c` 수정). 시험 쪽 수정: 업타임 상위 워드와 부분 쓰기 기대값 오류, 감속 정지 종료 주파수 검사는 시험의 펄스 간격(200)이 거칠어 20펄스 간격 + 12 kHz 이하로 바꿨다(실제 2 ms 갱신은 5 kHz에서 약 10펄스).
 
 **이 시험이 증명하지 않는 것:** IDF API 서명, 인터럽트·IRAM 동작, 타이밍, MCPWM/PCNT 실동작, NVS 실제 기록, 네트워크·UART, 실장비 전부(§8).
+
+## 11. 리뷰 1차(firmware-review-1) 지적별 반영 표 (2026-10-31)
+
+판정: 조건부 통과(Major 7 = M-01~M-06 + T-01, Minor 10). 아래 "반영" = 코드와 호스트 시험으로 반영. IDF 동작은 호스트에서 증명할 수 없으므로 HIL 확인 항목을 따로 적었다.
+
+| ID | 처리 | 내용 | 시험 / 남은 확인 |
+|---|---|---|---|
+| M-01 | 반영 | `fw_hal_stop_release()` 신설(hal_io.c, STOP ISR과 같은 `portMUX`). `start_move()`에서 STOP 입력 활성·io 미초기화는 즉시 0x10, 래치만 남은 경우는 다른 모든 거부 조건 뒤에서 해제 후 시작. recover 실패 시 래치 재설정+0x10. io_task의 물리 START 경로도 같은 mux로 감쌈. ESTOP_RELEASE 거부 유지. 주석·notes R7·§7 이슈 1 갱신 | `test_d072_hmi_start_releases_latch`(START_REL, 레거시 코일 0, START_ABS), `test_d072_refusals_keep_latch`(<10 ms, 입력 활성, 서보 OFF·범위·알람 거부 시 래치 유지). HIL: 실제 ISR vs 해제 경쟁 |
+| M-02 | 반영 | `fw_es_level_guard()`(fw_stop.h) + poll_once가 입력 활성·래치 없음이면 래치와 해당 축 차단. `fw_axis_poll()`은 `latched \|\| stop_input` | `test_m02_level_backup_without_isr`(fake_hal `FAKE_NO_ISR`: 1 ms 내 정지·래치, 축 poll만으로도 정지). HIL: T-07 |
+| M-03 | 반영 | 저장·재부팅 결정과 같은 락 구간에서 `s_saving`/`s_reboot_commit` 설정, 시작 명령(HMI, 레거시, 물리) 모두 `start_blocked()` 확인 | **호스트 시험 없음**(fw_motion.c는 IDF 의존). review 허용안 "T-06에 저장 직전 START" HIL 항목으로 넘김 |
+| M-04 | 반영 | `fw_cfg_defaults_model()`; `fw_dev_init`(첫 부팅·손상)과 `LOAD_DEFAULT`가 사용 | `test_model_default_comm_mode`, `test_network_and_mode`(RTU 모델 0x400E 기본 1) |
+| M-05 | 반영 (권고안 병행) | 네트워크 워드 변경은 `unlock_key` 없으면 예외 03(변경 없음). 네트워크만 바뀐 쓰기는 `cfg_changed` 미호출, 저장은 `NET_APPLY`/`SAVE`. 같은 쓰기 PDU에서 unlock과 네트워크를 함께 쓰면 잠금 해제는 쓰기 후 적용이라 거부됨(별도 쓰기 필요) | `test_network_and_mode`(잠금 없이 0x4000/0x4006/0x400E 거부, 해제 후 쓰기에서 `cfg_changed_n`=0) |
+| M-06 | 반영 | `boot_status` b6/b7(fault 경로 묶임). 묶이지 않은 축은 `engine_allowed`=false, 알람 0x0602, 시작 0x11. [권고] 허용 Kconfig는 만들지 않음(T-07 확인 전 소프트웨어 경로만 운전은 기준선 §3 의도와 다름). recover 실패는 M-01로 처리. "정체 감시"(계수 증가 없음 → 정지)는 **미구현**: 설계에 없는 임계값이라 T-07 결과를 보고 결정 | `test_m06_fault_path`(recover 실패 → 0x10·래치 유지, X 미바인딩 → X만 금지, Y 정상) |
+| T-01 | 반영 | `test_axis.c` 이전 단언("HMI도 재기동 불가") 삭제하고 D-072 시험으로 교체. 위 시험 목록 참조. M-03만 호스트 증명 불가(위) | make run 0 failures |
+| m-01 | 미반영 | TWDT ISR 훅·시험 빌드 정지 유도는 IDF 심볼·T-15 빌드 필요. HIL 후 결정 | U7 |
+| m-02 | 일부 | `fw_hal_wdt_add_self()`가 int 반환, 실패하면 `FW_BOOT_WDT` 해제+GPIO33 LOW. io_task 감시는 미반영 | HIL |
+| m-03 | 미반영 | T-03/T-04에서 LA로 마지막 펄스 폭 확인 후 결정 | HIL |
+| m-04 | 반영 | start_cb를 `fw_hal_io_init` 전에 등록, 저장 중 물리 START는 보류 | 호스트 시험 없음(fw_motion.c) |
+| m-05 | 반영 | STOP ISR 서비스 `ESP_INTR_FLAG_IRAM` 무조건 | pytest `test_stop_isr_iram_flag_is_unconditional_and_mux_protected` |
+| m-06 | 반영 | 어느 축에도 COMMLOSS 알람이 없으면 `s_cl_tripped` 해제 | 호스트 시험 없음(fw_motion.c) |
+| m-07 | 미반영 | RTU t3.5 이벤트 기반은 HIL 필요(U8) | U8 |
+| m-08 | 반영 | 접속 수를 accept 루프에서 증가, 태스크 생성 실패 시 감소 | 호스트 시험 없음 |
+| m-09 | 반영 | FC01/02 개수 0 또는 2000 초과 → 03, 정의 범위 밖 → 02. 레거시 창 호환 기준은 servo1axis(`COIL_COUNT` 기준 예외 02)와 같다 | `test_read_bits_limits` |
+| m-10 | 반영(문서) | 아래 §12 | – |
+
+## 12. 신규 레지스터(스펙 밖) 7개와 0x400E 잠금 조건
+
+`regmap_version`=2 유지(기존 주소 불변, 추가만). 메인 세션이 `regmap.yaml`과 interface-spec §5.3·§5.10에 올려야 한다.
+
+| 주소 | 이름 | 접근 | 내용 |
+|---|---|---|---|
+| 0x002C | reset_reason | R | 0 불명 1 전원 2 SW 3 패닉 4 INT WDT 5 TASK WDT 6 기타 WDT 7 브라운아웃 8 딥슬립 9 외부 10 기타 (T-15) |
+| 0x002D | boot_status | R | b0 X 펄스, b1 Y 펄스, b2 STOP 입력, b3 NVS, b4 설정 CRC, b5 WDT, **b6 X fault 경로, b7 Y fault 경로(리뷰 M-06 신규)**, b8 모드 되돌림, b9 GPIO33 허용 중 |
+| 0x002E | 실제 통신 모드 | R | 0 TCP / 1 RTU (재부팅 후 적용된 값) |
+| 0x0031 | di_raw | R | b0 X START, b1 X STOP, b2 DI3, b3 DI4, b4 Y START, b5 Y STOP, b6 DI7, b7 DI8, 1=활성. 예비 DI 극성은 START 극성을 그대로 쓴다: **보드 실측 전 "미확인"**(U10) |
+| 0x0032 | do_state | R | b0 DO1 … b3 DO4 (구동값) |
+| 0x0120 | user_do | R/W | b0 DO3, b1 DO4 (명령 영역, 저장 안 함) |
+| 0x400E | comm_mode | R/W | 0 TCP / 1 RTU. RTU는 RS-485 실장 모델(`FW_MODEL_RTU=y`)에서만 허용(그 외 예외 03). 출하 기본값: TCP 모델=TCP, RTU 모델=RTU (D-059). **재부팅 후 적용** |
+
+**0x400E(및 0x4000~0x400D 네트워크 워드) 잠금 조건:**
+1. 먼저 `unlock_key`(0x0102)=0x4D56을 별도 쓰기로 보내 10 s 안에 쓴다. 잠금 상태에서 값이 바뀌는 쓰기는 예외 03이고 아무것도 바뀌지 않는다(같은 값 재쓰기는 허용).
+2. 쓰기만으로는 NVS 저장이 요청되지 않는다(자동 저장 없음). `net_apply`(0x400F)=1(잠금 필요, 운전 중 거부 0x12) 또는 `SAVE`로 저장한다.
+3. 적용은 재부팅 후(`REBOOT`, 잠금 필요).

@@ -49,7 +49,7 @@ static void client_task(void *argument)
 {
     client_arg_t arg = *(client_arg_t *)argument;
     free(argument);
-    const unsigned n = __atomic_add_fetch(&s_clients, 1, __ATOMIC_SEQ_CST);
+    const unsigned n = __atomic_load_n(&s_clients, __ATOMIC_SEQ_CST);   /* already counted by the accept loop (m-08) */
     fw_motion_set_clients(n);
     ESP_LOGI(TAG, "client %ld connected (%u)", (long)arg.conn, n);
 
@@ -107,7 +107,11 @@ static void server_task(void *argument)
             client_arg_t *ca = malloc(sizeof(*ca));
             if (!ca) { close(cfd); continue; }
             ca->fd = cfd; ca->conn = ++s_next_conn;
-            if (xTaskCreate(client_task, "fw_client", 4096, ca, 6, NULL) != pdPASS) { close(cfd); free(ca); }
+            __atomic_add_fetch(&s_clients, 1, __ATOMIC_SEQ_CST);                           /* count before the task exists (m-08) */
+            if (xTaskCreate(client_task, "fw_client", 4096, ca, 6, NULL) != pdPASS) {
+                fw_motion_set_clients(__atomic_sub_fetch(&s_clients, 1, __ATOMIC_SEQ_CST));
+                close(cfd); free(ca);
+            }
         }
         close(lfd);
         vTaskDelay(pdMS_TO_TICKS(500));
