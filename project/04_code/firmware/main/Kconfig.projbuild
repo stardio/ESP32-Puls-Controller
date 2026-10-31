@@ -1,0 +1,138 @@
+menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
+
+    config FW_AXIS_COUNT
+        int "Number of axes (1 = X only, 2 = X and Y)"
+        range 1 2
+        default 2
+        help
+          1-axis model: the Y axis (MCPWM group 1, PCNT unit 2, STOP/START/DI of the Y side, DO2) is not created.
+          Register area 0x2000 answers exception 02.
+
+    config FW_MODEL_RTU
+        bool "Model has RS-485 hardware (U17 ISO1500 mounted): RTU slave can be selected"
+        default n
+        help
+          Off (TCP model): writing comm_mode = RTU (0x400E) is refused (exception 03) and a stored RTU value falls back to TCP.
+
+    config FW_VERSION_MAJOR
+        int "Firmware version major"
+        default 0
+    config FW_VERSION_MINOR
+        int "Firmware version minor"
+        default 1
+    config FW_VERSION_PATCH
+        int "Firmware version patch"
+        default 0
+
+    config FW_X_PLS_GPIO
+        int "X axis pulse GPIO (ISO7720 U1 -> AM26C31 1A)"
+        default 25
+    config FW_X_DIR_GPIO
+        int "X axis direction GPIO"
+        default 32
+    config FW_Y_PLS_GPIO
+        int "Y axis pulse GPIO (ISO7720 U16 -> AM26C31 3A)"
+        default 20
+    config FW_Y_DIR_GPIO
+        int "Y axis direction GPIO"
+        default 21
+    config FW_OE_GPIO
+        int "Shared pulse output enable GPIO (TLP2361 -> AM26C31 /G), LOW at boot"
+        default 33
+    config FW_OE_ACTIVE_LOW
+        bool "Output enable is active LOW (off: HIGH = allowed, baseline v0.4 F-03)"
+        default n
+
+    config FW_X_START_GPIO
+        int "X START input (DI1), edge; -1 = no START input on this unit"
+        default 54
+        help
+          With the default pull towards the inactive level an unconnected START pin reads "not pressed": no edge, no start.
+    config FW_X_STOP_GPIO
+        int "X STOP input (DI2), NC contact"
+        default 19
+    config FW_X_DI3_GPIO
+        int "X spare input DI3 (register only)"
+        default 18
+    config FW_X_DI4_GPIO
+        int "X spare input DI4 (register only)"
+        default 17
+    config FW_Y_START_GPIO
+        int "Y START input (DI5), edge; -1 = no START input on this unit"
+        default 7
+    config FW_Y_STOP_GPIO
+        int "Y STOP input (DI6), NC contact"
+        default 8
+    config FW_Y_DI7_GPIO
+        int "Y spare input DI7 (register only)"
+        default 15
+    config FW_Y_DI8_GPIO
+        int "Y spare input DI8 (register only)"
+        default 16
+    config FW_STOP_ACTIVE_LOW
+        bool "STOP input active LOW. Off (default) = NC contact, contact open -> HIGH = STOP (baseline v0.4 F-07)"
+        default n
+    config FW_START_ACTIVE_LOW
+        bool "START and spare inputs active LOW (contact closed -> TLP293 on -> GPIO LOW) [recommended, unverified on the board]"
+        default y
+    config FW_START_DEBOUNCE_MS
+        int "START stable time before an edge is accepted (ms) [recommended 5]"
+        range 1 100
+        default 5
+
+    config FW_DO1_GPIO
+        int "DO1 servo ON X"
+        default 23
+    config FW_DO2_GPIO
+        int "DO2 servo ON Y"
+        default 26
+    config FW_DO3_GPIO
+        int "DO3 general output"
+        default 27
+    config FW_DO4_GPIO
+        int "DO4 general output"
+        default 46
+
+    config FW_RS485_TX_GPIO
+        int "RS-485 TX"
+        default 24
+    config FW_RS485_RX_GPIO
+        int "RS-485 RX"
+        default 47
+    config FW_RS485_DE_GPIO
+        int "RS-485 DE (UART RTS in half-duplex mode)"
+        default 48
+    config FW_RTU_UART_NUM
+        int "UART number for the RTU slave"
+        range 1 4
+        default 1
+    config FW_PHY_RESET_GPIO
+        int "IP101 PHY reset GPIO"
+        default 51
+    config FW_TCP_PORT
+        int "Modbus TCP port"
+        default 502
+
+    config FW_IRQ_PRIO_STOP
+        int "Interrupt level of the STOP GPIO ISR (0 = default; highest of the ISRs, review M-03)"
+        range 0 3
+        default 3
+    config FW_IRQ_PRIO_PCNT
+        int "Interrupt level of the PCNT watch-point ISR (0 = driver default)"
+        range 0 3
+        default 2
+    config FW_UPDATE_MS
+        int "Motion task period (profile update, completion check) in ms [recommended 2]"
+        range 1 10
+        default 2
+    config FW_WDT_TIMEOUT_MS
+        int "Task watchdog timeout of the motion task (ms) [recommended 1000, T-15 to confirm]"
+        range 100 10000
+        default 1000
+    config FW_PERIOD_IMMEDIATE
+        bool "Apply the MCPWM period immediately instead of at the timer-empty event (servo1axis behaviour)"
+        default n
+        help
+          Only to be turned on if HIL check M-05 (first cycle after a start) shows that the TEZ update does not apply the
+          start period.
+endmenu

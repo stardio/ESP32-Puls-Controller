@@ -41,6 +41,7 @@ enum { FW_O_COMMAND = 0x00, FW_O_TARGET = 0x02, FW_O_SPEED = 0x04, FW_O_ACCEL = 
 /* sys segment offsets (register = 0x0110 + offset) */
 enum { FW_S_COMMLOSS_EN = 0, FW_S_COMMLOSS_MS, FW_S_COMMLOSS_SCOPE, FW_S_AUTO_SAVE, FW_S_MAX_CLIENTS };
 /* net segment offsets (register = 0x4000 + offset) */
+/* FW_N_RTU_BAUD holds baud / 100 (96 = 9600, 1152 = 115200) */
 enum { FW_N_IP = 0, FW_N_MASK = 2, FW_N_GW = 4, FW_N_UNIT = 6, FW_N_MAC = 7 /*3 words, read-only*/, FW_N_RTU_BAUD = 0x0A,
        FW_N_RTU_PARITY = 0x0B, FW_N_RTU_ADDR = 0x0C, FW_N_COMM_MODE = 0x0E };
 

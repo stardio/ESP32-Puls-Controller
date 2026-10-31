@@ -1,0 +1,3 @@
+# Model 2axis_rtu. Build: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.model_2axis_rtu" set-target esp32p4 build
+CONFIG_FW_AXIS_COUNT=2
+CONFIG_FW_MODEL_RTU=y

@@ -45,7 +45,7 @@ static const fw_ent_t NET[] = {
     U32(FW_N_MASK, 1, 0xFFFFFFFFLL, 0xFFFFFF00LL),
     U32(FW_N_GW, 0, 0xDFFFFFFFLL, 0),
     U16(FW_N_UNIT, 1, 247, 1),
-    U16(FW_N_RTU_BAUD, 1200, 115200, 9600), U16(FW_N_RTU_PARITY, 0, 2, 0), U16(FW_N_RTU_ADDR, 1, 247, 1),
+    U16(FW_N_RTU_BAUD, 12, 1152, 96), U16(FW_N_RTU_PARITY, 0, 2, 0), U16(FW_N_RTU_ADDR, 1, 247, 1),
     U16(FW_N_COMM_MODE, 0, 1, FW_MODE_TCP),
 };
 #define N(a) (unsigned)(sizeof(a) / sizeof((a)[0]))
@@ -115,9 +115,9 @@ static bool mask_ok(uint32_t m)           /* contiguous ones from the top, not a
     const uint32_t inv = ~m;
     return (inv & (inv + 1u)) == 0;
 }
-static bool baud_ok(uint32_t b)
+static bool baud_ok(uint32_t b)         /* register value = baud / 100 (115200 does not fit a 16-bit register) */
 {
-    static const uint32_t ok[] = {1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200};
+    static const uint32_t ok[] = {12, 24, 48, 96, 192, 384, 576, 1152};
     for (unsigned i = 0; i < sizeof(ok) / sizeof(ok[0]); ++i) if (ok[i] == b) return true;
     return false;
 }
