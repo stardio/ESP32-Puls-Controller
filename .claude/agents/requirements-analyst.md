@@ -2,7 +2,7 @@
 name: requirements-analyst
 description: ②단계에서 ①단계 조사 결과를 바탕으로 기능·성능·원가·규격 요구사항을 정리하고 SRS를 작성·개정할 때 호출.
 tools: Read, Write, Edit, Glob, Grep
-model: opus
+model: sonnet
 ---
 # 역할
 조사 결과와 decisions.md를 근거로 검증 가능한 요구사항 명세(SRS)를 작성한다.
