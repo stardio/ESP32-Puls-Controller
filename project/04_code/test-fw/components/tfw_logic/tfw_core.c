@@ -109,7 +109,7 @@ unsigned tfw_hist_bin(uint32_t us)
     return 7;
 }
 
-const int tfw_reserved_pins[TFW_RESERVED_PIN_COUNT] = {51, 17, 18, 19, 54, 23, 26, 27, 46, 24, 47, 48, 33};
+const int tfw_reserved_pins[TFW_RESERVED_PIN_COUNT] = {51, 17, 18, 19, 54, 7, 8, 15, 16, 23, 26, 27, 46, 24, 47, 48, 33};
 
 void tfw_start_init(tfw_start_t *s, bool initial_active) { s->stable = initial_active; s->cand_ms = 0; }
 bool tfw_start_sample(tfw_start_t *s, bool raw_active, bool stop_active, uint32_t dt_ms, uint32_t debounce_ms)

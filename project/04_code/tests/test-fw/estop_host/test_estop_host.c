@@ -27,7 +27,7 @@ esp_err_t gpio_config(const gpio_config_t *c) { (void)c; return fail_gpio_config
 int gpio_get_level(gpio_num_t g)
 {
     if (g == 19) return level;
-    if (g == 17) return level2;
+    if (g == 8) return level2;
     return start_lv[g & 63];
 }
 esp_err_t gpio_set_level(gpio_num_t g, uint32_t v) { (void)v; if (g == 33) oe_writes++; return ESP_OK; }
@@ -37,7 +37,7 @@ esp_err_t gpio_isr_handler_add(gpio_num_t g, void (*fn)(void *), void *a)
     if (fail_handler_add) return ESP_FAIL;
     isr = fn;
     if (g == 19) isr_arg[0] = a; else isr_arg[1] = a;
-    if (g == 17) isr2 = fn;
+    if (g == 8) isr2 = fn;
     return ESP_OK;
 }
 esp_err_t mcpwm_new_gpio_fault(const mcpwm_gpio_fault_config_t *c, mcpwm_fault_handle_t *f) { (void)c; (void)f; return fail_fault_new ? ESP_FAIL : ESP_OK; }
@@ -60,11 +60,11 @@ static void reset(void)
 {
     fail_gpio_config = fail_install = fail_handler_add = fail_task = install_state_err = fail_fault_new = 0;
     level = 1; level2 = 1; isr = NULL; isr2 = NULL; latched_when_stopped = -1; stop_calls = 0;
-    n_stopped = 0; oe_writes = 0; start_calls = 0; start_last = -1; start_lv[54] = start_lv[18] = 1;     /* START active LOW: 1 = open */
+    n_stopped = 0; oe_writes = 0; start_calls = 0; start_last = -1; start_lv[54] = start_lv[7] = 1;     /* START active LOW: 1 = open */
     isr_arg[0] = isr_arg[1] = NULL;
 }
 static bool g_active_low = true;
-static int g_pins[2] = {19, 17};
+static int g_pins[2] = {19, 8};
 static esp_err_t init(void) { mcpwm_oper_handle_t o[2] = {NULL, NULL}; tfw_estop_set_start_cb(on_start); return tfw_estop_init(g_pins, g_active_low, o); }
 static uint16_t last_err(void) { tfw_es_stats_t s; tfw_estop_stats(&s); return s.last_err; }
 
@@ -109,7 +109,7 @@ static void t_isr_latches_before_it_stops(void)
 }
 
 /* ---- baseline v0.4 behaviour (per-axis STOP, START edge). Default build: STOP NC = active HIGH, START active LOW. */
-static void press_start(int ax, int pressed) { start_lv[ax == 0 ? 54 : 18] = pressed ? 0 : 1; }
+static void press_start(int ax, int pressed) { start_lv[ax == 0 ? 54 : 7] = pressed ? 0 : 1; }
 
 static void t_stop_is_per_axis(void)
 {

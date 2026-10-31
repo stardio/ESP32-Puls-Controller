@@ -623,8 +623,8 @@ TEST(t_v04_reserved_pins_and_default_axis_pins)          /* F-08, F-01, F-02 */
     const int old_en[2] = {25, 33}, dup_di[2] = {20, 18};
     CHECK(tfw_pin_conflict(old_en, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));   /* 33 is the OE now, not an axis EN */
     CHECK(tfw_pin_conflict(dup_di, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
-    const int dbg[3] = {15, 16, 22};                                                 /* F-11 candidates are free */
-    CHECK(!tfw_pin_conflict(dbg, 3, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
+    const int dbg[1] = {22};                                                         /* F-11 candidate (15/16 are DI on schematic r2) */
+    CHECK(!tfw_pin_conflict(dbg, 1, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
 }
 TEST(t_v04_start_edge_debounced_once)
 {

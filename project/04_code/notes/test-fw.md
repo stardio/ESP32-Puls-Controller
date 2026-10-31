@@ -145,7 +145,7 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 전제: ESP-IDF 5.5.3 설치, Waveshare ESP32-P4-ETH 보드, 로직 분석기(4채널 이상, 최소 10 MS/s [가정]), 스위칭 허브. 기존 IP101 배선(192.168.0.220)과 기존 HMI 연결을 그대로 쓴다.
 
 0. **배선 기준 (D-067, D-068, 기준선 v0.4)**: 지금은 **1축 캐리어 + P4 보드**만 있다. 축2는 캐리어 축2 부품(U16, J14, DI3/DI4, DO2) 없이 **P4 보드 헤더의 GPIO20(펄스)·GPIO21(방향)을 로직 분석기로 직접 측정**한다. 이 방식으로 T-03·T-04·T-05·T-06·T-08·T-09(2축 MCU 성능)를 진행한다. **T-14(2축 실모터)와 축2 출력단(U16/AM26C31/J14) 시험은 ⑤단계로 넘긴다.**
-   - 축1: 펄스 25, 방향 32 → 캐리어 J4. STOP = GPIO19 (DI2, J15), START = GPIO54 (DI1). 서보 ON DO1 = GPIO23.
+   - 축1: 펄스 25, 방향 32 → 캐리어 J7 PULS(X). STOP = GPIO19 (DI2, J15), START = GPIO54 (DI1). 서보 ON DO1 = GPIO23.
    - 축2: 펄스 20, 방향 21(헤더에서 측정). `TFW_AX2_IO_PRESENT`=n(기본)이면 축2 STOP(GPIO17)·START(GPIO18)를 **읽지도 않고 무시**한다(NC 극성에서 들뜬 입력이 "항상 정지"를 만드는 것을 막기 위함). 축2는 Modbus/호스트 명령으로만 구동한다.
    - 두 축 공용 펄스 출력 인에이블 = GPIO33(HIGH = 허용). 부팅 중 LOW, 축 생성 후 HIGH로 올리고 STOP은 건드리지 않는다. 1축 캐리어에서 GPIO33은 TLP2361 → AM26C31 /G로 가는 선이다.
    - STOP 접점은 NC(`TFW_ESTOP_ACTIVE_LOW`=n, 활성 HIGH). START는 `TFW_START_ACTIVE_LOW`=y [권고, 접점 닫힘 → TLP293 ON → GPIO LOW 가정, 보드 미검증]. 부팅 로그에서 STOP이 "inactive"로 나오는지 먼저 확인하고, "ACTIVE"면 극성을 반대로 바꾼다.
@@ -334,3 +334,9 @@ $ cd project/04_code/tests/test-fw && python3 -m pytest -q
 - **V4-01(Major) 반영:** `tfw_main.c`에서 시퀀서 중단 판정(`hw_aborted`)을 `mask_all_blocked`로 바꿨다. axis_mask에 속한 **모든 축**의 STOP이 활성일 때만 시퀀스를 끝내므로, T-07에서 축1 STOP 중에도 축2가 계속 출력되어 축 독립성을 실측할 수 있다. 멈춘 축은 목표 미달로 판정된다. 명령 거부(`tfw_cmd_check`)는 보수적으로 **한 축이라도** STOP이면 0x10 거부를 유지했다(`mask_blocked`, T-07 래치 시험과 일치). T-07 호스트 판정은 시퀀스 중단 상태에 의존하지 않아 변경 없음.
 - 테스트: `checks=16629 failed=0`, `274 passed`(수정 후 재실행).
 - Minor 4건(NC 입력 내부 풀다운, 해제 경로 경쟁·es_task 락 대기, §5 설계 차이 기록, 콜백 등록 순서)은 실측 결과와 함께 ④ 제품 구현 때 처리한다.
+
+
+## 11. 회로도 r2 반영 (D-069, 메인 세션)
+
+- 축2 STOP 기본값 GPIO17 → **GPIO8**(DI6, J16), 축2 START GPIO18 → **GPIO7**(DI5, J16). 예약 핀에 7·8·15·16 추가(17개). 디버그 후보는 22만 남음.
+- 시험 기대값 갱신 후 `checks=16629 failed=0`, `274 passed`.

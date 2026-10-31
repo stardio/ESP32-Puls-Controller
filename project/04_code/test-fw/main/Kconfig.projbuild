@@ -43,7 +43,7 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
           Turn on only when the 2-axis carrier (U16, J14, DI3/DI4) is wired.
     config TFW_ESTOP2_GPIO
         int "Axis 2 STOP input GPIO (DI4; baseline v0.4 F-06: GPIO17; -1 = none)"
-        default 17
+        default 8
     config TFW_ESTOP_ACTIVE_LOW
         bool "STOP input active LOW. Off (default, baseline v0.4 F-07) = NC contact, active HIGH"
         default n
@@ -52,7 +52,7 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
         default 54
     config TFW_START2_GPIO
         int "Axis 2 START input GPIO (DI3, edge; baseline v0.4 sec.7: GPIO18; -1 = none)"
-        default 18
+        default 7
     config TFW_START_ACTIVE_LOW
         bool "START input active LOW (contact closed -> TLP293 on -> GPIO LOW) [recommended default, unverified on the board]"
         default y

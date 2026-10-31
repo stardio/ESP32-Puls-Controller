@@ -93,8 +93,8 @@ def test_stub_follows_the_bool_rule(tmp_path):
     assert "CONFIG_TFW_LEGACY_NVS_ON_WRITE" not in d and d["CONFIG_TFW_UPD_MODE_HWTIMER"] == "1"
     assert d["CONFIG_TFW_AX2_PLS_GPIO"] == "20" and d["CONFIG_TFW_AX2_DIR_GPIO"] == "21"          # F-01, F-02
     assert d["CONFIG_TFW_PULSE_OE_GPIO"] == "33" and "CONFIG_TFW_PULSE_OE_ACTIVE_LOW" not in d    # F-03..F-05
-    assert d["CONFIG_TFW_ESTOP_GPIO"] == "19" and d["CONFIG_TFW_ESTOP2_GPIO"] == "17" and "CONFIG_TFW_ESTOP_ACTIVE_LOW" not in d   # F-06, F-07
-    assert d["CONFIG_TFW_START_GPIO"] == "54" and d["CONFIG_TFW_START2_GPIO"] == "18"
+    assert d["CONFIG_TFW_ESTOP_GPIO"] == "19" and d["CONFIG_TFW_ESTOP2_GPIO"] == "8" and "CONFIG_TFW_ESTOP_ACTIVE_LOW" not in d   # F-06, F-07
+    assert d["CONFIG_TFW_START_GPIO"] == "54" and d["CONFIG_TFW_START2_GPIO"] == "7"
     assert "CONFIG_TFW_AX2_IO_PRESENT" not in d                                                   # D-068 default n
     bools = {n for n, t, _ in kconfig_items() if t == "bool"}
     assert {"TFW_ESTOP_ACTIVE_LOW", "TFW_UPD_MODE_HWTIMER", "TFW_LEGACY_NVS_ON_WRITE"} <= bools

@@ -2,7 +2,7 @@
 
 | 작성 | 작성일 | 상태 | 근거 |
 |---|---|---|---|
-| 메인 세션 (경량 모드) | 2026-10-31 | v0.4.1 — architect 리뷰(reviews/baseline-v0.4-review.md) Major 6건 반영, G3 검토용 | SRS v0.8(D-063), decisions.md D-024~D-064, reference/2axis-schematic.pdf, schematic-reconciliation.md v0.2, power-budget.md, bom-schematic.md v0.4 |
+| 메인 세션 (경량 모드) | 2026-10-31 | v0.4.2 — 2축 회로도 r2(reference/2axis-schematic.pdf) 반영. v0.4.1 — architect 리뷰(reviews/baseline-v0.4-review.md) Major 6건 반영, G3 검토용 | SRS v0.8(D-063), decisions.md D-024~D-064, reference/2axis-schematic.pdf, schematic-reconciliation.md v0.2, power-budget.md, bom-schematic.md v0.4 |
 
 > 이 문서는 architecture.md v0.3.1, interface-spec.md v0.2, cost-reduction-review.md, schematic-reconciliation.md에 흩어진 결론을 **현재 유효한 값 하나로** 모은 것이다. 충돌하면 이 문서가 우선한다. 세부 근거와 계산은 원 문서를 따른다.
 > [권고] 표시는 CLAUDE.md 규칙 9에 따른 권고 기본값이다.
@@ -24,15 +24,17 @@
 
 | 기능 | GPIO | 회로 | 1축 | 2축 | 근거 |
 |---|---|---|---|---|---|
-| 축1 펄스 | 25 | ISO7720(U1) → AM26C31 1A → J4 | ○ | ○ | D-048 |
-| 축1 방향 | 32 | ISO7720(U1) → AM26C31 2A → J4 | ○ | ○ | D-048 |
-| 축2 펄스 | 20 | ISO7720(U16) → AM26C31 3A → J14 | – | ○ | D-048 |
-| 축2 방향 | 21 | ISO7720(U16) → AM26C31 4A → J14 | – | ○ | D-048 |
+| 축1 펄스 | 25 | ISO7720(U1) → AM26C31 1A → J7 PULS(X) | ○ | ○ | D-048 |
+| 축1 방향 | 32 | ISO7720(U1) → AM26C31 2A → J7 PULS(X) | ○ | ○ | D-048 |
+| 축2 펄스 | 20 | ISO7720(U16) → AM26C31 3A → J13 PULS(Y) | – | ○ | D-048 |
+| 축2 방향 | 21 | ISO7720(U16) → AM26C31 4A → J13 PULS(Y) | – | ○ | D-048 |
 | 펄스 출력 인에이블 | 33 | TLP2361 → AM26C31 /G (두 축 공용), G = GND_ISO5 | ○ | ○ | D-047, D-061 |
 | DI1 START 축1 | 54 | TLP293(U9), 엣지 판정 | ○ | ○ | D-050, D-060 |
 | DI2 STOP 축1 | 19 | TLP293(U10) | ○ | ○ | D-027, D-060 |
-| DI3 START 축2 | 18 | TLP293(U11) | – | ○ | D-060 |
-| DI4 STOP 축2 | 17 | TLP293(U12) | – | ○ | D-060 |
+| DI3, DI4 (X축 예비) | 18, 17 | TLP293(U11, U12), J15 D/I(X) | 예비 | 예비 | D-069 |
+| DI5 START 축2(Y) | 7 | TLP293(U13), J16 D/I(Y) | – | ○ | D-069 |
+| DI6 STOP 축2(Y) | 8 | TLP293(U14), J16 | – | ○ | D-069 |
+| DI7, DI8 (Y축 예비) | 15, 16 | TLP293(U18, U20), J16 | – | 예비 | D-069 |
 | DO1 서보 ON 축1 | 23 | TLP293 + MMBT2222A | ○ | ○ | D-042, D-060 |
 | DO2 서보 ON 축2 | 26 | TLP293 + MMBT2222A | – | ○ | D-060 |
 | DO3, DO4 | 27, 46 | 예비 | – | 예비 | D-060 |
@@ -68,6 +70,18 @@
 
 **G3 전제 조건:** 현 시제품의 AM26C31 4번(G)·12번(/G) 결선을 도통 확인한다(1회, 테스터). G가 GND_ISO5가 아니면 부팅 중 출력 허용 가능성이 있으므로 G3 판정에 필요하다(리뷰 RV-04).
 
+### 4.1 회로도 r2 반영 현황 (2026-10-31)
+
+| # | 개정 | r2 반영 |
+|---|---|---|
+| 1 | G = GND_ISO5, /G = TLP2361 | 반영(D-066) |
+| 2 | GPIO33 풀다운 10 kΩ | **반영(R32)** |
+| 3 | 축별 STOP AND 게이트 | 미반영 → 다음 리비전 권고 |
+| 4 | F1 지연형 | 회로도에 형식 표기 없음 → BOM에서 지연형 지정 |
+| 5 | 역접속 보호 | 미반영 → 다음 리비전 권고 |
+| 6 | U19 2 W급 교체 | 미반영(TMV2405S 유지) → 다음 리비전 권고 |
+| 신규 | DI 8점(J15 D/I(X) 4점 + J16 D/I(Y) 4점), 각 입력 0.01 µF 필터 | D-069 |
+
 ## 5. 원가 (부품만, 확인 단가, VAT 별도, bom-schematic v0.4)
 
 | 1축 TCP | 1축 RTU | 2축 TCP | 2축 RTU |
@@ -97,12 +111,12 @@ PCB·SMT·하우징 미포함. 원가 목표 9만원(D-016) 대비 모델별 약
 |---|---|---|
 | F-01, F-02 | 축2 핀 기본값 | 펄스 20, 방향 21 |
 | F-03, F-04, F-05 | 축별 EN 제거, GPIO33 = 공용 펄스 출력 인에이블(/G 경유, HIGH = 허용) | `TFW_PULSE_OE_ACTIVE_LOW` = n |
-| F-06, F-07 | STOP = GPIO19(DI2), 축2 STOP = GPIO17(DI4), NC 접점 | ACTIVE_LOW = n |
-| — | START 입력 추가 | 축1 GPIO54, 축2 GPIO18, 엣지 |
-| F-08 | 핀 중복 예약 목록 | 17·18·19·54(DI), 23·26·27·46(DO), 24·47·48(RS-485), 33(OE) 추가 |
+| F-06, F-07 | STOP = GPIO19(DI2), 축2 STOP = GPIO8(DI6, r2), NC 접점 | ACTIVE_LOW = n |
+| — | START 입력 추가 | 축1 GPIO54, 축2 GPIO7(DI5, r2), 엣지 |
+| F-08 | 핀 중복 예약 목록 | 17·18·19·54·7·8·15·16(DI), 23·26·27·46(DO), 24·47·48(RS-485), 33(OE) 추가 |
 | F-09 | 서보 ON | 축1 DO1(23), 축2 DO2(26), DO3·DO4 끔 |
 | F-10 | 부팅 로그 문구 | "GPIO19 = DI2(J15)" |
-| F-11 | 디버그 핀 | -1 유지, 후보 15·16·22 |
+| F-11 | 디버그 핀 | -1 유지, 후보 22(15·16은 r2에서 DI) |
 | F-12 | T-07 자극 | J15 DI2 단자에 24 V 스위치로 인가 |
 | F-13 | 이더넷 | IP101만(변경 없음) |
 | F-14 | USB 콘솔 | USB Serial/JTAG 전용 핀 사용 확인 후 GPIO24/25와 겹치지 않게 설정(보드 결선 확인 필요) |
