@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서보 펄스 주파수 계산기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: an instrument panel — inputs on the left, one large readout on the right, a gauge strip showing where the result falls against 200 kpps and 1 MHz. */
+:root {
+  --bg: #f3f5f4;
+  --panel: #ffffff;
+  --ink: #17201d;
+  --muted: #5c6a65;
+  --line: #d6ddda;
+  --accent: #0d7a5f;
+  --accent-soft: #dcefe8;
+  --ok: #0d7a5f;
+  --warn: #b26b00;
+  --bad: #b3261e;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101614; --panel: #18211e; --ink: #e6ece9; --muted: #9aaaa4; --line: #2c3833;
+    --accent: #3fbf98; --accent-soft: #1d3a31; --ok: #3fbf98; --warn: #e3a338; --bad: #ef6b62;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101614; --panel: #18211e; --ink: #e6ece9; --muted: #9aaaa4; --line: #2c3833;
+  --accent: #3fbf98; --accent-soft: #1d3a31; --ok: #3fbf98; --warn: #e3a338; --bad: #ef6b62;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55; }
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; display: grid; gap: 24px; }
+header h1 { margin: 0 0 6px; font-size: 1.75rem; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 62ch; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 16px; }
+.card h2 { margin: 0; font-size: 1.05rem; }
+.field { display: grid; gap: 6px; }
+.field label { font-weight: 500; font-size: 0.95rem; }
+.hint { color: var(--muted); font-size: 0.85rem; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+input[type="number"], select {
+  font: inherit; font-family: var(--font-num); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; width: 100%;
+}
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font: inherit; font-size: 0.85rem; font-family: var(--font-num); border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink); border-radius: 999px; padding: 4px 10px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; border: 0; background: var(--panel); color: var(--ink); padding: 8px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.readout { display: grid; gap: 4px; }
+.readout .label { color: var(--muted); font-size: 0.9rem; }
+.big { font-family: var(--font-num); font-size: 2.6rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.big small { font-size: 1rem; color: var(--muted); margin-left: 6px; }
+.verdict { border-left: 4px solid var(--ok); background: var(--accent-soft); padding: 12px 14px; border-radius: 6px; }
+.verdict.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--panel)); }
+.verdict.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, var(--panel)); }
+.verdict strong { display: block; margin-bottom: 2px; }
+.gauge { display: grid; gap: 6px; }
+.track { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--ok) 0 60%, var(--warn) 60% 85%, var(--bad) 85% 100%); opacity: 0.85; }
+.marker { position: absolute; top: -5px; width: 4px; height: 22px; background: var(--ink); border-radius: 2px; transform: translateX(-2px); transition: left 0.2s; }
+@media (prefers-reduced-motion: reduce) { .marker { transition: none; } }
+.ticks { display: flex; justify-content: space-between; font-family: var(--font-num); font-size: 0.75rem; color: var(--muted); }
+dl.stats { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; }
+dl.stats dt { color: var(--muted); }
+dl.stats dd { margin: 0; font-family: var(--font-num); text-align: right; font-variant-numeric: tabular-nums; }
+.foot { color: var(--muted); font-size: 0.85rem; max-width: 70ch; }
+.foot p { margin: 0 0 6px; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>서보 펄스 주파수 계산기</h1>
+    <p>서보 드라이브를 펄스열로 운전할 때 컨트롤러가 내야 하는 펄스 주파수(pps)를 계산합니다. 드라이브의 전자기어 설정값과 목표 속도를 넣으세요.</p>
+  </header>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="in-title">
+      <h2 id="in-title">입력</h2>
+
+      <div class="field">
+        <label for="ppr">모터 1회전당 지령 펄스 수 (전자기어 설정)</label>
+        <input id="ppr" type="number" min="1" step="1" value="10000">
+        <div class="chips" id="ppr-chips" aria-label="자주 쓰는 값">
+          <button class="chip" data-v="1000" type="button">1,000</button>
+          <button class="chip" data-v="2500" type="button">2,500</button>
+          <button class="chip" data-v="5000" type="button">5,000</button>
+          <button class="chip" data-v="10000" type="button">10,000</button>
+          <button class="chip" data-v="20000" type="button">20,000</button>
+          <button class="chip" data-v="131072" type="button">131,072</button>
+        </div>
+        <span class="hint">드라이브 파라미터의 "1회전당 지령 펄스" 또는 전자기어비로 정해집니다. 제조사·설정마다 다르므로 실제 설정값을 넣으세요.</span>
+      </div>
+
+      <div class="field">
+        <span id="mode-label" style="font-weight:500;font-size:0.95rem">목표 속도 입력 방식</span>
+        <div class="seg" role="group" aria-labelledby="mode-label">
+          <button type="button" id="mode-rpm" aria-pressed="true">모터 회전수 (rpm)</button>
+          <button type="button" id="mode-lin" aria-pressed="false">직선 속도 (볼스크루)</button>
+        </div>
+      </div>
+
+      <div class="field" id="rpm-box">
+        <label for="rpm">모터 최고 회전수 (rpm)</label>
+        <input id="rpm" type="number" min="0" step="1" value="3000">
+        <div class="chips" id="rpm-chips">
+          <button class="chip" data-v="1000" type="button">1,000</button>
+          <button class="chip" data-v="2000" type="button">2,000</button>
+          <button class="chip" data-v="3000" type="button">3,000</button>
+          <button class="chip" data-v="5000" type="button">5,000</button>
+        </div>
+      </div>
+
+      <div id="lin-box" class="hidden" style="display:none">
+        <div class="field">
+          <label for="lead">볼스크루 리드 (mm/회전)</label>
+          <input id="lead" type="number" min="0.1" step="0.1" value="10">
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label for="speed">목표 이송 속도 (mm/s)</label>
+          <input id="speed" type="number" min="0" step="1" value="300">
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label for="ratio">감속비 (모터:부하, 직결이면 1)</label>
+          <input id="ratio" type="number" min="0.01" step="0.01" value="1">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="axes">동시 운전 축 수</label>
+        <select id="axes">
+          <option value="1">1축</option>
+          <option value="2">2축 동시</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="out-title" aria-live="polite">
+      <h2 id="out-title">결과</h2>
+      <div class="readout">
+        <span class="label">필요한 펄스 주파수 (축당)</span>
+        <div class="big" id="pps">500,000<small>pps</small></div>
+        <span class="hint" id="pps-k">= 500 kHz</span>
+      </div>
+
+      <div class="gauge" aria-hidden="true">
+        <div class="track"><div class="marker" id="marker"></div></div>
+        <div class="ticks"><span>0</span><span>200 k</span><span>1 M</span><span>&gt; 1 M</span></div>
+      </div>
+
+      <div class="verdict" id="verdict"><strong id="v-title"></strong><span id="v-text"></span></div>
+
+      <dl class="stats">
+        <dt>모터 회전수</dt><dd id="s-rpm">3,000 rpm</dd>
+        <dt>펄스 1개당 이동량</dt><dd id="s-res">–</dd>
+        <dt>200 kpps에서 최고 회전수</dt><dd id="s-200">1,200 rpm</dd>
+        <dt>1 Mpps에서 최고 회전수</dt><dd id="s-1m">6,000 rpm</dd>
+      </dl>
+    </section>
+  </div>
+
+  <section class="foot" aria-label="계산 근거와 유의 사항">
+    <p><strong>계산식</strong> 필요 주파수(pps) = 1회전당 지령 펄스 수 × 회전수(rpm) ÷ 60. 직선 속도 입력 시 회전수 = 이송 속도 ÷ 리드 × 60 × 감속비.</p>
+    <p><strong>판정 기준</strong> 200 kpps 이하는 설계 목표 범위(축당, 2축 동시 포함)입니다. 1 Mpps는 1축 실모터 운전으로 확인한 값이며, 2축 동시 운전의 1 Mpps는 아직 검증 전입니다.</p>
+    <p><strong>연결 방식</strong> 드라이브의 오픈 컬렉터 펄스 입력은 허용 주파수가 낮은 경우가 많습니다. 높은 주파수에서는 차동(라인 드라이버) 입력으로 연결하고, 드라이브 매뉴얼의 입력 허용 주파수를 확인하세요.</p>
+  </section>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d = 0) => Number.isFinite(n) ? n.toLocaleString("ko-KR", { maximumFractionDigits: d, minimumFractionDigits: 0 }) : "–";
+  let mode = "rpm";
+
+  function rpmNow() {
+    if (mode === "rpm") return Math.max(0, parseFloat($("rpm").value) || 0);
+    const lead = parseFloat($("lead").value) || 0, speed = parseFloat($("speed").value) || 0, ratio = parseFloat($("ratio").value) || 0;
+    return lead > 0 ? speed / lead * 60 * ratio : 0;
+  }
+
+  function update() {
+    const ppr = Math.max(0, parseFloat($("ppr").value) || 0);
+    const rpm = rpmNow();
+    const axes = parseInt($("axes").value, 10);
+    const pps = ppr * rpm / 60;
+
+    $("pps").innerHTML = fmt(Math.round(pps)) + "<small>pps</small>";
+    $("pps-k").textContent = pps >= 1e6 ? "= " + fmt(pps / 1e6, 2) + " MHz" : "= " + fmt(pps / 1e3, 1) + " kHz";
+    $("s-rpm").textContent = fmt(rpm, 1) + " rpm";
+    $("s-200").textContent = ppr > 0 ? fmt(200000 * 60 / ppr, 0) + " rpm" : "–";
+    $("s-1m").textContent = ppr > 0 ? fmt(1e6 * 60 / ppr, 0) + " rpm" : "–";
+    if (mode === "lin" && ppr > 0) {
+      const lead = parseFloat($("lead").value) || 0, ratio = parseFloat($("ratio").value) || 1;
+      $("s-res").textContent = fmt(lead / ratio / ppr * 1000, 3) + " µm";
+    } else {
+      $("s-res").textContent = ppr > 0 ? fmt(360 / ppr, 4) + "°" : "–";
+    }
+
+    // marker: 0..200k -> 0..60%, 200k..1M -> 60..85%, >1M -> 85..100%
+    let pos;
+    if (pps <= 2e5) pos = pps / 2e5 * 60;
+    else if (pps <= 1e6) pos = 60 + (pps - 2e5) / 8e5 * 25;
+    else pos = Math.min(100, 85 + Math.log10(pps / 1e6) * 15);
+    $("marker").style.left = pos + "%";
+
+    const v = $("verdict");
+    v.className = "verdict";
+    if (pps <= 2e5) {
+      $("v-title").textContent = "설계 목표 범위 안입니다";
+      $("v-text").textContent = axes === 2 ? "2축을 동시에 운전해도 축당 200 kpps 목표 범위입니다." : "1축 운전에 여유가 있습니다.";
+    } else if (pps <= 1e6) {
+      v.classList.add("warn");
+      $("v-title").textContent = axes === 2 ? "2축 동시 운전은 검증 범위 밖입니다" : "1축 실측 검증 범위입니다";
+      $("v-text").textContent = axes === 2
+        ? "1축은 1 Mpps까지 실모터 운전을 확인했지만, 2축 동시 200 kpps 초과는 검증 전입니다. 전자기어 값을 낮추면 범위 안으로 들어올 수 있습니다."
+        : "1 Mpps 실모터 운전 실적이 있는 범위입니다. 드라이브의 입력 허용 주파수와 차동 연결을 확인하세요.";
+    } else {
+      v.classList.add("bad");
+      $("v-title").textContent = "1 Mpps를 넘습니다";
+      const need = rpm > 0 ? Math.floor(1e6 * 60 / rpm) : 0;
+      $("v-text").textContent = "1회전당 지령 펄스 수를 " + fmt(need) + " 이하로 낮추거나(전자기어 조정) 회전수를 줄이세요.";
+    }
+
+    document.querySelectorAll("#ppr-chips .chip").forEach((c) => c.setAttribute("aria-pressed", String(parseFloat(c.dataset.v) === ppr)));
+    document.querySelectorAll("#rpm-chips .chip").forEach((c) => c.setAttribute("aria-pressed", String(mode === "rpm" && parseFloat(c.dataset.v) === rpm)));
+  }
+
+  function setMode(m) {
+    mode = m;
+    $("mode-rpm").setAttribute("aria-pressed", String(m === "rpm"));
+    $("mode-lin").setAttribute("aria-pressed", String(m === "lin"));
+    $("rpm-box").style.display = m === "rpm" ? "" : "none";
+    $("lin-box").style.display = m === "lin" ? "" : "none";
+    update();
+  }
+
+  document.querySelectorAll("#ppr-chips .chip").forEach((c) => c.addEventListener("click", () => { $("ppr").value = c.dataset.v; update(); }));
+  document.querySelectorAll("#rpm-chips .chip").forEach((c) => c.addEventListener("click", () => { $("rpm").value = c.dataset.v; update(); }));
+  ["ppr", "rpm", "lead", "speed", "ratio", "axes"].forEach((id) => $(id).addEventListener("input", update));
+  $("mode-rpm").addEventListener("click", () => setMode("rpm"));
+  $("mode-lin").addEventListener("click", () => setMode("lin"));
+  update();
+})();
+</script>
+</body>
+</html>
