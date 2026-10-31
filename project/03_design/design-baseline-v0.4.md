@@ -2,7 +2,7 @@
 
 | 작성 | 작성일 | 상태 | 근거 |
 |---|---|---|---|
-| 메인 세션 (경량 모드) | 2026-10-31 | G3 검토용 초안 | SRS v0.8(D-063), decisions.md D-024~D-064, reference/2axis-schematic.pdf, schematic-reconciliation.md v0.2, power-budget.md, bom-schematic.md v0.4 |
+| 메인 세션 (경량 모드) | 2026-10-31 | v0.4.1 — architect 리뷰(reviews/baseline-v0.4-review.md) Major 6건 반영, G3 검토용 | SRS v0.8(D-063), decisions.md D-024~D-064, reference/2axis-schematic.pdf, schematic-reconciliation.md v0.2, power-budget.md, bom-schematic.md v0.4 |
 
 > 이 문서는 architecture.md v0.3.1, interface-spec.md v0.2, cost-reduction-review.md, schematic-reconciliation.md에 흩어진 결론을 **현재 유효한 값 하나로** 모은 것이다. 충돌하면 이 문서가 우선한다. 세부 근거와 계산은 원 문서를 따른다.
 > [권고] 표시는 CLAUDE.md 규칙 9에 따른 권고 기본값이다.
@@ -47,12 +47,13 @@
 | 최고 주파수 | 축당 ≥ 200 kpps(2축 동시 포함). 1축은 1 MHz 운전 실적 | D-007, D-010, D-028 |
 | START | 엣지 판정으로 해당 축 펄스열 출력 시작 | D-050, D-055 |
 | STOP(외부 입력) | 해당 축 펄스 즉시 차단(감속 없음). 활성 중 START 무시, 해제 후 START 엣지로만 재기동. 래치·리셋 명령 없음 | D-058 |
-| STOP(하드웨어) | 어느 STOP이든 /G를 하드웨어로 직접 차단 → **두 축 전체 정지**(AM26C31 인에이블 공용). 펌웨어는 감지 즉시 펄스 LOW 고정 + GPIO33 비활성 | D-061, bom-schematic v0.4 |
+| STOP(하드웨어) | **축별 차단**: 각 축의 STOP 입력이 그 축의 펄스 신호(ISO7720 2차측, AM26C31 입력 앞)를 AND 게이트로 직접 LOW 고정한다. 다른 축과 GPIO33(공용 인에이블)은 영향받지 않는다. 펌웨어는 감지 즉시 해당 축 MCPWM 출력을 LOW로 고정한다 | D-058, D-060, 리뷰 RV-01·RV-03 |
 | HMI 정지 버튼 | 설정 감속 시간으로 감속 정지 | D-058 |
 | STOP 접점 극성 | [권고] NC(단선 시 정지 쪽으로 동작). `TFW_ESTOP_ACTIVE_LOW` 기본값 n | 안전 관행, schematic-reconciliation F-07 |
 | 서보 ON | [권고] 기존 동작 유지: 운전 중 자동 ON(`svon_mode`=0), HMI 수동 ON 모드(=1) 선택 가능 | DC-18 |
 | 원점복귀 | v1 미확정(HMI 화면만 있음) | D-045 |
-| 부팅·리셋·MCU 정지 시 | 펄스 출력 금지(/G 비활성 + GPIO33 풀다운) | D-047, D-061 |
+| 부팅·리셋·MCU 정지 시 | 펄스 출력 금지(/G 비활성 + GPIO33 풀다운). GPIO33은 전체 출력 허용/금지 전용이며 STOP과 무관 | D-047, D-061 |
+| 안전 고지 | 이 STOP 차단은 인증된 안전 기능(SIL/PL)이 아니다. 비상정지는 드라이브 전원·STO 등 별도 안전 회로로 구성해야 하며, 매뉴얼에 명시한다 | NFR-020, 리뷰 RV-06 |
 
 ## 4. 회로 개정 (다음 보드 리비전)
 
@@ -60,12 +61,12 @@
 |---|---|---|---|
 | 1 | AM26C31 G = GND_ISO5 고정, /G = TLP2361 구동을 회로도에 명시 | – | D-061 |
 | 2 | GPIO33 풀다운 10 kΩ | ESR10EZPF1002 | D-061 |
-| 3 | STOP → /G 하드웨어 차단 | SN74LVC1G32 + STOP당 TLP293 | D-061 |
+| 3 | 축별 STOP 하드웨어 차단: 축마다 펄스 라인에 2입력 AND 게이트 1개(5V_ISO 측, 입력 = ISO7720 펄스 출력, STOP 포토커플러 2차측). 1축 모델은 축2 게이트 미실장(축1에 영향 없음) | 74LVC1G08 계열 ×축 수 + STOP당 TLP293 (parts-selector 재선정, OR 게이트안 대체) | D-061, 리뷰 RV-01~03 |
 | 4 | F1 2 A 지연형 | Littelfuse 0449002.MR | D-049, power-budget |
 | 5 | 24 V 역접속 보호 | DMP6350S-7 + 12 V 제너 | D-061 |
 | 6 | U19 5V_ISO DC-DC 교체(2축 100 Ω 부하 시 정격 106 %) | B2405S-2WR3 (U15와 동일 품번) | D-043, D-061 |
 
-현 시제품은 AM26C31 4번(G)·12번(/G) 결선을 한 번 도통 확인한다(실물 사실, G3 비차단).
+**G3 전제 조건:** 현 시제품의 AM26C31 4번(G)·12번(/G) 결선을 도통 확인한다(1회, 테스터). G가 GND_ISO5가 아니면 부팅 중 출력 허용 가능성이 있으므로 G3 판정에 필요하다(리뷰 RV-04).
 
 ## 5. 원가 (부품만, 확인 단가, VAT 별도, bom-schematic v0.4)
 
@@ -133,5 +134,6 @@ PCB·SMT·하우징 미포함. 원가 목표 9만원(D-016) 대비 모델별 약
 ## 9. 남은 사항
 
 - 사업 판단(G6): 수량 시나리오, 판매가 비율, 추가 화면 비용, TCP/RTU 가격 차등.
-- 실물 사실(비차단): AM26C31 4/12번 결선, P4 보드 USB 콘솔 핀, P4 보드 실소비 전류.
+- 실물 사실: **AM26C31 4/12번 결선(G3 전제)**, P4 보드 USB 콘솔 핀·실소비 전류(비차단).
+- **G3 판단 사항(리뷰 RV-05):** D-024는 'MCU를 2축 실측 결과로 G3에서 확정'인데 D-030으로 2축 실측이 보류되어 있다. G3에서 사용자가 둘 중 하나를 고른다: (a) D-030을 풀고 2축 실측 후 G3 판정, (b) 1축 실적(D-028)으로 MCU를 확정하고 2축은 조건부(2축 실측 합격 전 2축 모델 출시 보류)로 G3 승인. [권고] (b): 1축 출시를 앞당기고 2축 위험은 출시 조건으로 묶는다.
 - 문서 정리: architecture.md·interface-spec.md 본문은 이 기준선과 다른 부분이 있다. G3 통과 후 ④ 착수 시 필요한 절만 갱신한다.
