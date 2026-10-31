@@ -6,28 +6,52 @@ menu "TFW test firmware (D-025, G3 pre-test only)"
     config TFW_AX1_DIR_GPIO
         int "Axis 1 direction GPIO"
         default 32
-    config TFW_AX1_EN_GPIO
-        int "Axis 1 enable GPIO"
+    config TFW_PULSE_OE_GPIO
+        int "Pulse output enable GPIO, shared by both axes (baseline v0.4 F-03..F-05: GPIO33 -> TLP2361 -> AM26C31 /G)"
         default 33
+        help
+          Driven LOW at boot (output forbidden) and raised once after the pulse axes are created.
+          It is NOT touched by STOP: STOP only forces the pulse output of its own axis LOW.
+    config TFW_PULSE_OE_ACTIVE_LOW
+        bool "Pulse output enable is active LOW (off = HIGH allows output, baseline v0.4 F-03)"
+        default n
     config TFW_AX2_PLS_GPIO
-        int "Axis 2 pulse GPIO (-1 = axis 2 not created; MUST be set to your wiring, PS-27 pending)"
-        default -1
+        int "Axis 2 pulse GPIO (baseline v0.4 F-01: 20; -1 = axis 2 not created)"
+        default 20
     config TFW_AX2_DIR_GPIO
-        int "Axis 2 direction GPIO (-1 = axis 2 not created)"
-        default -1
-    config TFW_AX2_EN_GPIO
-        int "Axis 2 enable GPIO (-1 = axis 2 not created)"
-        default -1
+        int "Axis 2 direction GPIO (baseline v0.4 F-02: 21; -1 = axis 2 not created)"
+        default 21
     config TFW_AXIS_COUNT
         int "Number of axes to bring up (1 or 2)"
         range 1 2
         default 2
     config TFW_ESTOP_GPIO
-        int "Emergency-stop input GPIO (D-027: GPIO19)"
+        int "Axis 1 STOP input GPIO (DI2, J15; baseline v0.4 F-06: GPIO19)"
         default 19
+        help
+          T-07 stimulus (baseline v0.4 F-12): feed the J15 DI2 terminal from a 24 V switch wired as an NC contact
+          (closed in normal operation); opening it is the STOP. Check the boot log: with the switch closed the input
+          must read "inactive". If it reads ACTIVE, the TLP293 polarity is the other way round: flip TFW_ESTOP_ACTIVE_LOW.
+          Axis 2: the same with the DI4 terminal (GPIO17).
+    config TFW_ESTOP2_GPIO
+        int "Axis 2 STOP input GPIO (DI4; baseline v0.4 F-06: GPIO17; -1 = none)"
+        default 17
     config TFW_ESTOP_ACTIVE_LOW
-        bool "E-stop input active LOW (existing wiring, pull-up). Off = NC contact, active HIGH (DC-17)"
+        bool "STOP input active LOW. Off (default, baseline v0.4 F-07) = NC contact, active HIGH"
+        default n
+    config TFW_START_GPIO
+        int "Axis 1 START input GPIO (DI1, edge; baseline v0.4 sec.7: GPIO54; -1 = none)"
+        default 54
+    config TFW_START2_GPIO
+        int "Axis 2 START input GPIO (DI3, edge; baseline v0.4 sec.7: GPIO18; -1 = none)"
+        default 18
+    config TFW_START_ACTIVE_LOW
+        bool "START input active LOW (contact closed -> TLP293 on -> GPIO LOW) [recommended default, unverified on the board]"
         default y
+    config TFW_START_DEBOUNCE_MS
+        int "START input stable time before an edge is accepted [recommended 5 ms]"
+        range 1 100
+        default 5
     config TFW_DEBUG_GPIO
         int "Debug GPIO toggled in the watch-point ISR (-1 = off)"
         default -1

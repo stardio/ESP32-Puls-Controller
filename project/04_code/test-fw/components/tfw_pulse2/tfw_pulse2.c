@@ -24,6 +24,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "tfw_logic.h"
+#include "tfw_cfg.h"
 
 static const char *TAG = "TFW_PULSE2";
 
@@ -38,7 +39,7 @@ static const char *TAG = "TFW_PULSE2";
 typedef struct {
     bool ok;
     int err;
-    int pls_gpio, dir_gpio, en_gpio;
+    int pls_gpio, dir_gpio;
     mcpwm_timer_handle_t timer;
     mcpwm_oper_handle_t oper;
     mcpwm_cmpr_handle_t cmpr;
@@ -60,7 +61,7 @@ typedef struct {
 
 static axis_t s_ax[MAX_AXES];
 static uint8_t s_axis_count;
-static bool (*s_block_fn)(void);          /* N-03: e-stop block check (set by main; keeps the component free of a tfw_estop_io dependency) */
+static bool (*s_block_fn)(uint8_t axis);          /* N-03: e-stop block check (set by main; keeps the component free of a tfw_estop_io dependency) */
 static uint32_t s_res_hz, s_upd_us, s_ref_us, s_ns_per_tick, s_cpu_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
 static tfw_upd_mode_t s_mode;
 static tfw_upd_stats_t s_upd;
@@ -175,15 +176,21 @@ static void destroy_axis(axis_t *a)
     ESP_LOGE(TAG, "axis %u: %s failed: %s (0x%x)", (unsigned)idx, what, esp_err_to_name(_e), (unsigned)_e); \
     a->err = (int)_e; destroy_axis(a); return _e; } } while (0)
 
-static esp_err_t create_axis(uint8_t idx, int pls, int dir, int en)
+/* F-03..F-05: ONE output enable for both axes (GPIO33 -> TLP2361 -> AM26C31 /G). Forbidden while booting/failed, allowed
+ * once the axes exist. STOP never touches it (STOP is per axis: tfw_pulse2_stop only forces its own generator LOW). */
+static esp_err_t oe_set(bool allow)
+{
+    return gpio_set_level((gpio_num_t)CONFIG_TFW_PULSE_OE_GPIO, (uint32_t)tfw_oe_level(allow, TFW_B_PULSE_OE_ACTIVE_LOW));
+}
+
+static esp_err_t create_axis(uint8_t idx, int pls, int dir)
 {
     axis_t *a = &s_ax[idx];
     memset(a, 0, sizeof(*a));
-    a->pls_gpio = pls; a->dir_gpio = dir; a->en_gpio = en;
+    a->pls_gpio = pls; a->dir_gpio = dir;
 
-    gpio_config_t outs = {.pin_bit_mask = (1ULL << dir) | (1ULL << en), .mode = GPIO_MODE_OUTPUT};
-    STEP(gpio_config(&outs), "dir/en gpio");
-    gpio_set_level(en, 0);
+    gpio_config_t outs = {.pin_bit_mask = (1ULL << dir), .mode = GPIO_MODE_OUTPUT};
+    STEP(gpio_config(&outs), "dir gpio");
     gpio_set_level(dir, 1);
 
     mcpwm_timer_config_t tc = {
@@ -220,7 +227,7 @@ static esp_err_t create_axis(uint8_t idx, int pls, int dir, int en)
     STEP(pcnt_unit_enable(a->pcnt), "pcnt enable");
     a->wp_target = -1;
     a->ok = true;
-    ESP_LOGI(TAG, "axis %u ready: MCPWM group %u, PCNT unit, PLS=%d DIR=%d EN=%d", (unsigned)(idx + 1), (unsigned)idx, pls, dir, en);
+    ESP_LOGI(TAG, "axis %u ready: MCPWM group %u, PCNT unit, PLS=%d DIR=%d", (unsigned)(idx + 1), (unsigned)idx, pls, dir);
     return ESP_OK;
 }
 
@@ -248,30 +255,38 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
 
     /* M-08: pin conflict check. Axis 1 pins, axis 2 pins, e-stop, debug, probe and the pins the existing servo1axis
      * code uses for other purposes (PHY reset 51, servo outputs 23/26/27/46). EMAC/RMII pins of the board: UNCONFIRMED. */
-    const int ax1[3] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO};
-    const int ax2[3] = {CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO};
-    const int other[] = {CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PROBE_GPIO,
-                         51, 23, 26, 27, 46};
+    {
+        gpio_config_t oe = {.pin_bit_mask = 1ULL << CONFIG_TFW_PULSE_OE_GPIO, .mode = GPIO_MODE_OUTPUT};
+        ESP_RETURN_ON_ERROR(gpio_config(&oe), TAG, "pulse OE gpio");
+        oe_set(false);                            /* output forbidden until the axes are up */
+    }
+    /* F-08: the shared pulse output enable (CONFIG_TFW_PULSE_OE_GPIO) and the reserved list (tfw_reserved_pins:
+     * 17/18/19/54 DI, 23/26/27/46 DO, 24/47/48 RS-485, 33 OE, 51 PHY reset) are checked as well. */
+    const int ax1[2] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO};
+    const int ax2[2] = {CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO};
+    int other[TFW_RESERVED_PIN_COUNT + 6] = {CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_ESTOP2_GPIO, CONFIG_TFW_START_GPIO,
+                         CONFIG_TFW_START2_GPIO, CONFIG_TFW_DEBUG_GPIO, CONFIG_TFW_DEBUG_GPIO_ESTOP};
+    memcpy(other + 6, tfw_reserved_pins, sizeof(tfw_reserved_pins));
     const size_t n_other = sizeof(other) / sizeof(other[0]);
     esp_err_t e = ESP_OK;
-    if (tfw_pin_conflict(ax1, 3, other, n_other) || ax1[0] < 0 || ax1[1] < 0 || ax1[2] < 0) {
+    if (tfw_pin_conflict(ax1, 2, other, n_other) || ax1[0] < 0 || ax1[1] < 0) {
         ESP_LOGE(TAG, "axis 1 pins conflict with another function or are unset: axis 1 NOT created");
         s_ax[0].err = ESP_ERR_INVALID_ARG;
         return ESP_ERR_INVALID_ARG;
     }
-    e = create_axis(0, ax1[0], ax1[1], ax1[2]);
+    e = create_axis(0, ax1[0], ax1[1]);
     if (e != ESP_OK) return e;                    /* axis 1 is mandatory */
     if (axis_count == 2) {
         esp_err_t e2;
-        int all1[sizeof(other) / sizeof(other[0]) + 3]; memcpy(all1, other, sizeof(other)); memcpy(all1 + n_other, ax1, sizeof(ax1));
-        if (ax2[0] < 0 || ax2[1] < 0 || ax2[2] < 0) {
+        int all1[sizeof(other) / sizeof(other[0]) + 2]; memcpy(all1, other, sizeof(other)); memcpy(all1 + n_other, ax1, sizeof(ax1));
+        if (ax2[0] < 0 || ax2[1] < 0) {
             e2 = ESP_ERR_INVALID_ARG;
             ESP_LOGW(TAG, "axis 2 pins unset (-1): axis 2 not created -> tst_status 0x12 (set TFW_AX2_* in menuconfig)");
-        } else if (tfw_pin_conflict(ax2, 3, all1, n_other + 3)) {
+        } else if (tfw_pin_conflict(ax2, 2, all1, n_other + 2)) {
             e2 = ESP_ERR_INVALID_ARG;
             ESP_LOGE(TAG, "axis 2 pins conflict with axis 1 / e-stop / debug / probe / reserved pins: axis 2 not created");
         } else {
-            e2 = create_axis(1, ax2[0], ax2[1], ax2[2]);
+            e2 = create_axis(1, ax2[0], ax2[1]);
         }
         s_ax[1].err = (int)e2;
         if (e2 != ESP_OK) ESP_LOGW(TAG, "axis 2 NOT available (esp_err 0x%x): group 1 / PCNT unit 2 / pins -> tst_status 0x12", (unsigned)e2);
@@ -293,6 +308,9 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
             : xTaskCreate(update_task, "tfw_upd", 3072, NULL, 10, &s_upd_task);
         ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "update task");
     }
+    oe_set(true);
+    ESP_LOGI(TAG, "pulse output enable GPIO%d = %d (allowed, both axes; active %s)", CONFIG_TFW_PULSE_OE_GPIO,
+             tfw_oe_level(true, TFW_B_PULSE_OE_ACTIVE_LOW), TFW_B_PULSE_OE_ACTIVE_LOW ? "LOW" : "HIGH");
     return ESP_OK;
 }
 
@@ -323,7 +341,7 @@ static esp_err_t start_common(axis_t *a, uint32_t first_freq, uint32_t target, b
     if (a->active) return ESP_ERR_INVALID_STATE;
     /* N-03: no start (and so no pcnt_unit_clear_count, which would hide the pulses counted after a trip) while the
      * e-stop is latched / active / not initialised */
-    if (s_block_fn && s_block_fn()) return ESP_ERR_INVALID_STATE;
+    if (s_block_fn && s_block_fn((uint8_t)(a - s_ax))) return ESP_ERR_INVALID_STATE;
     uint32_t ticks;
     if (!tfw_ticks_for_freq(s_res_hz, first_freq, s_max_ticks, &ticks)) return ESP_ERR_INVALID_ARG;
 
@@ -347,7 +365,6 @@ static esp_err_t start_common(axis_t *a, uint32_t first_freq, uint32_t target, b
         axis_t *p = a;
         if (!set_ticks(p, first_freq)) { e = ESP_ERR_INVALID_ARG; goto fail; }
     }
-    gpio_set_level(a->en_gpio, 1);
     a->active = true;
     e = mcpwm_generator_set_force_level(a->gen, -1, true);
     if (e != ESP_OK) goto fail;
@@ -355,7 +372,7 @@ static esp_err_t start_common(axis_t *a, uint32_t first_freq, uint32_t target, b
     if (e == ESP_OK) {
         /* N-03: the e-stop ISR may have run between "active = true" and the timer start (it stopped nothing then, or
          * its force-low was released above). The ISR latches BEFORE it stops, so the latch is visible here: stop again. */
-        if (s_block_fn && s_block_fn()) {
+        if (s_block_fn && s_block_fn((uint8_t)(a - s_ax))) {
             tfw_pulse2_stop((uint8_t)(a - s_ax));
             return ESP_ERR_INVALID_STATE;
         }
@@ -367,7 +384,6 @@ fail:
     mcpwm_timer_start_stop(a->timer, MCPWM_TIMER_STOP_EMPTY);
     pcnt_unit_stop(a->pcnt);
     remove_wps(a);
-    gpio_set_level(a->en_gpio, 0);
     return e;
 }
 
@@ -387,7 +403,7 @@ esp_err_t tfw_pulse2_run_fixed(uint8_t axis, uint32_t freq_hz, uint32_t count)
     return start_common(&s_ax[axis], freq_hz, count ? count : UINT32_MAX, true);
 }
 
-void tfw_pulse2_set_block_fn(bool (*fn)(void)) { s_block_fn = fn; }
+void tfw_pulse2_set_block_fn(bool (*fn)(uint8_t axis)) { s_block_fn = fn; }
 
 void IRAM_ATTR tfw_pulse2_stop(uint8_t axis)
 {
@@ -409,7 +425,6 @@ bool tfw_pulse2_busy(uint8_t axis)
     /* finalise: output is already forced low by the watch-point ISR */
     mcpwm_timer_start_stop(a->timer, MCPWM_TIMER_STOP_EMPTY);
     pcnt_unit_stop(a->pcnt);
-    gpio_set_level(a->en_gpio, 0);
     a->active = false;
     return false;
 }
@@ -475,9 +490,10 @@ void tfw_pulse2_probe_caps(tfw_caps_t *out)
 
     if (out->max_period_ticks > 0 && out->max_period_ticks < s_max_ticks) s_max_ticks = out->max_period_ticks;   /* never raised above the assumed 65535 */
 
-    const int taken[] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX1_EN_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
-                         CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_AX2_EN_GPIO, CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_DEBUG_GPIO,
-                         CONFIG_TFW_DEBUG_GPIO_ESTOP, 51, 23, 26, 27, 46};
+    int taken[TFW_RESERVED_PIN_COUNT + 9] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO, CONFIG_TFW_AX2_PLS_GPIO,
+                         CONFIG_TFW_AX2_DIR_GPIO, CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_ESTOP2_GPIO, CONFIG_TFW_DEBUG_GPIO,
+                         CONFIG_TFW_DEBUG_GPIO_ESTOP, CONFIG_TFW_PULSE_OE_GPIO};
+    memcpy(taken + 9, tfw_reserved_pins, sizeof(tfw_reserved_pins));
     const bool probe_ok = pin >= 0 && !tfw_pin_conflict(&pin, 1, taken, sizeof(taken) / sizeof(taken[0]));   /* M-08 */
     if (!probe_ok) {
         ESP_LOGW(TAG, "probe pin %d unset or used by another function: generator-2 / PCNT-channel-2 probes SKIPPED (not tested)", pin);

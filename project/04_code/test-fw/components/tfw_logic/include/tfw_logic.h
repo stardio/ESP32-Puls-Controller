@@ -98,6 +98,19 @@ TFW_INLINE uint32_t tfw_sat_mul(uint32_t a, uint32_t b)
 TFW_INLINE uint32_t tfw_upd_ref_us(bool task_mode, uint32_t cfg_upd_us) { return task_mode ? 10000u : cfg_upd_us; }
 /* M-08: true if any pin of a[] (>= 0) appears twice in a[] or also appears in b[] (>= 0). */
 bool tfw_pin_conflict(const int *a, size_t na, const int *b, size_t nb);
+/* F-08: pins the carrier board uses for other purposes (PHY reset 51; DI 17/18/19/54; DO 23/26/27/46; RS-485 24/47/48;
+ * pulse output enable 33). Axis pins and debug/probe pins must not be any of these. */
+#define TFW_RESERVED_PIN_COUNT 13u
+extern const int tfw_reserved_pins[TFW_RESERVED_PIN_COUNT];
+/* F-03: level of the shared pulse output enable pin. allow=true -> HIGH unless active_low. */
+TFW_INLINE int tfw_oe_level(bool allow, bool active_low) { return (allow != active_low) ? 1 : 0; }
+/* F-09: servo ON outputs. DO1 (GPIO23) = axis 1, DO2 (GPIO26) = axis 2, DO3 (27) and DO4 (46) are always off. */
+typedef struct { uint8_t do1, do2, do3, do4; } tfw_servo_do_t;
+TFW_INLINE tfw_servo_do_t tfw_servo_do(bool on_axis1, bool on_axis2)
+{
+    tfw_servo_do_t d = {on_axis1 ? 1u : 0u, on_axis2 ? 1u : 0u, 0u, 0u};
+    return d;
+}
 
 /* ---------- results snapshot (single-writer fields) ---------- */
 typedef struct {
@@ -187,6 +200,17 @@ uint16_t tfw_es_state(const tfw_es_t *e, bool input_active);
 uint16_t tfw_es_release(tfw_es_t *e, bool input_active);   /* 0 ok, TFW_ST_REJECT_BUSY if refused */
 void     tfw_es_input_sample(tfw_es_t *e, bool input_active, uint32_t dt_ms);
 uint32_t tfw_es_pulses_after(uint32_t snap, uint32_t final_count);
+
+/* ---------- START edge input (baseline v0.4 sec.3: START = edge, ignored while STOP is active) ---------- */
+typedef struct {
+    bool     stable;           /* debounced level: true = START active */
+    uint32_t cand_ms;          /* how long the raw level has differed from the debounced one */
+} tfw_start_t;
+/* initial_active: level at boot. A START that is already active at boot is NOT an edge. */
+void tfw_start_init(tfw_start_t *s, bool initial_active);
+/* Call every dt_ms. Returns true exactly once per inactive->active transition that stayed stable for debounce_ms,
+ * unless stop_active (latched or input active) at that moment: then the edge is consumed and ignored. */
+bool tfw_start_sample(tfw_start_t *s, bool raw_active, bool stop_active, uint32_t dt_ms, uint32_t debounce_ms);
 
 /* ---------- Modbus ---------- */
 #define TFW_HR_LEGACY_COUNT 32
