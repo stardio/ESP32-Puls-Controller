@@ -7,8 +7,8 @@
 | 단계 | 상태 | 주요 산출물 | 비고 |
 |---|---|---|---|
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
-| ② 요구사항 | 완료 | srs.md v0.7, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
-| ③ 설계 | 보류 | architecture.md v0.3.1, interface-spec.md v0.2, parts-comparison.md, bom-draft.md, modules/MOD-01~25·TFW-01~05, handoff.md (project/03_design) | servo1axis 기준선(D-024) 반영. G3 승인 요청은 사용자 PC 실측(T-01~T-14) 결과 후 |
+| ② 요구사항 | 완료 | srs.md v0.8, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
+| ③ 설계 | 진행중 | architecture.md v0.3.1, interface-spec.md v0.2, parts-comparison.md, bom-draft.md, modules/MOD-01~25·TFW-01~05, handoff.md (project/03_design) | servo1axis 기준선(D-024) 반영. G3 승인 요청은 사용자 PC 실측(T-01~T-14) 결과 후 |
 | ④ 구현 | 대기(시험 펌웨어만 진행) | 04_code/test-fw (TFW-01~05), reviews/test-fw-review-1~3.md | D-025 예외: 시험 펌웨어 리뷰 3회차 '조건부 통과'. 제품 모듈은 G3 승인 필요 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
@@ -20,7 +20,7 @@
 
 | 게이트 | 상태 | 기록 파일 |
 |---|---|---|
-| G2 요구사항 확정 | 승인 (2026-10-30) | gates/G2-requirements.md |
+| G2 요구사항 확정 | 승인 (2026-10-30), v0.8 변경 승인 (2026-10-31) | gates/G2-requirements.md, gates/G2-requirements-change-v0.8.md |
 | G3 아키텍처·핵심 부품 | 미실시 | – |
 | G6 양산/출시·가격 | 미실시 | – |
 
