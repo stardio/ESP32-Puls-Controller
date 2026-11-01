@@ -341,7 +341,7 @@ static void test_m06_fault_path(void)
     set_leg(1000, true, 10000, 100, 100);
     fw_axis_poll(&AX[0]); fw_axis_poll(&AX[1]);
     CHECK_EQ(fw_axis_start_legacy(&AX[0]), FW_RES_ALARM);
-    CHECK_EQ(D.ax[0].alarm_code, FW_AL_PE_HW); CHECK(!(D.ax[0].status & FW_ASB_READY)); CHECK(D.ax[0].status & FW_ASB_ALARM);
+    CHECK_EQ(D.ax[0].alarm_code, FW_AL_PE_FAULTPATH); CHECK(!(D.ax[0].status & FW_ASB_READY)); CHECK(D.ax[0].status & FW_ASB_ALARM);
     CHECK_EQ(FP[0].starts, 0);
     fw_set32(D.cfg.op[1], FW_O_SPEED, 20000); fw_set32(D.cfg.op[1], FW_O_TARGET, 100);
     CHECK_EQ(fw_axis_command(&AX[1], FW_CMD_START_REL), FW_RES_OK);

@@ -263,4 +263,4 @@ test_beginner.c: 148838 checks, 0 failures   (신규 12개 시험)
 ### 13.6 PC 도구 정합 (메인 세션 전달, 2026-11-01)
 - sys_command: **FACTORY_RESET = 7, NET_RESET = 8** (펌웨어 값과 PC 도구 값이 같다. 변경 없음).
 - 포인트 테이블 0x6000~은 v1에서 "단독 운전 순서(FR-013)" 영역을 대체한다(같은 영역을 포인트 테이블로 사용, 순서 운전 기능은 v1 펌웨어에 없다).
-- 알람 **0x0603 E-PE-FAULTPATH** 추가(`FW_AL_PE_FAULTPATH`): 축의 MCPWM fault 경로가 묶이지 않았을 때(`boot_status` b6/b7 = 0) 이전의 0x0602 대신 보고한다. 운전 금지 동작은 그대로. alarm_hint 우선순위는 0x0602와 같은 단계(0x0101 > 0x0602 = 0x0603 > 0x0701 …). 기존 시험 `test_axis.c` 343행의 기대 코드를 0x0602 → 0x0603으로 바꿨다(삭제 아님). 펄스 엔진 미생성·WDT 미구독은 0x0602 유지.
+- 알람 **0x0603 E-PE-FAULTPATH** 추가(`FW_AL_PE_FAULTPATH`): 축의 MCPWM fault 경로가 묶이지 않았을 때(`boot_status` b6/b7 = 0) 이전의 0x0602 대신 보고한다. 운전 금지 동작은 그대로. alarm_hint 우선순위는 0x0602와 같은 단계(0x0101 > 0x0602 = 0x0603 > 0x0701 …). 기존 시험 `test_axis.c` 344행의 기대 코드를 0x0602 → 0x0603으로 바꿨다(삭제 아님). 펄스 엔진 미생성·WDT 미구독은 0x0602 유지.
