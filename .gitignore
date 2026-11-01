@@ -1,0 +1,6 @@
+
+# ESP-IDF build outputs
+project/04_code/test-fw/build*/
+project/04_code/firmware/build*/
+project/04_code/*/sdkconfig
+project/04_code/*/sdkconfig.old
