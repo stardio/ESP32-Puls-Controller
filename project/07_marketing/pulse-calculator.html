@@ -178,7 +178,7 @@ dl.stats dd { margin: 0; font-family: var(--font-num); text-align: right; font-v
 
   <section class="foot" aria-label="계산 근거와 유의 사항">
     <p><strong>계산식</strong> 필요 주파수(pps) = 1회전당 지령 펄스 수 × 회전수(rpm) ÷ 60. 직선 속도 입력 시 회전수 = 이송 속도 ÷ 리드 × 60 × 감속비.</p>
-    <p><strong>판정 기준</strong> 200 kpps 이하는 설계 목표 범위(축당, 2축 동시 포함)입니다. 1 Mpps는 1축 실모터 운전으로 확인한 값이며, 2축 동시 운전의 1 Mpps는 아직 검증 전입니다.</p>
+    <p><strong>판정 기준</strong> 200 kpps 이하는 설계 목표 범위(축당, 2축 동시 포함)입니다. 1 Mpps는 1축 컨트롤러 출력을 오실로스코프로 확인한 값이고, 실모터 운전은 대우 서보로 400 kpps까지 확인했습니다. 2축 동시 운전의 200 kpps 초과는 아직 검증 전입니다.</p>
     <p><strong>연결 방식</strong> 드라이브의 오픈 컬렉터 펄스 입력은 허용 주파수가 낮은 경우가 많습니다. 높은 주파수에서는 차동(라인 드라이버) 입력으로 연결하고, 드라이브 매뉴얼의 입력 허용 주파수를 확인하세요.</p>
   </section>
 </main>
@@ -229,8 +229,8 @@ dl.stats dd { margin: 0; font-family: var(--font-num); text-align: right; font-v
       v.classList.add("warn");
       $("v-title").textContent = axes === 2 ? "2축 동시 운전은 검증 범위 밖입니다" : "1축 실측 검증 범위입니다";
       $("v-text").textContent = axes === 2
-        ? "1축은 1 Mpps까지 실모터 운전을 확인했지만, 2축 동시 200 kpps 초과는 검증 전입니다. 전자기어 값을 낮추면 범위 안으로 들어올 수 있습니다."
-        : "1 Mpps 실모터 운전 실적이 있는 범위입니다. 드라이브의 입력 허용 주파수와 차동 연결을 확인하세요.";
+        ? "1축은 1 Mpps 출력을 확인했지만, 2축 동시 200 kpps 초과는 검증 전입니다. 전자기어 값을 낮추면 범위 안으로 들어올 수 있습니다."
+        : "컨트롤러 출력은 1 Mpps까지 확인했습니다(실모터 운전 실적은 400 kpps). 드라이브의 입력 허용 주파수(예: 대우 C-시리즈 400 kPPS)와 차동 연결을 확인하세요.";
     } else {
       v.classList.add("bad");
       $("v-title").textContent = "1 Mpps를 넘습니다";
