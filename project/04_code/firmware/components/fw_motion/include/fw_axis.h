@@ -31,6 +31,9 @@ typedef struct {
 } fw_axis_t;
 
 void    fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz);
+/* Same, but all start commands (fw_cmd_is_start) are refused with FW_RES_RUNNING while start_blocked (NVS write / reboot
+ * committed, review M-03 / R3-M1). A TEST keepalive of a moving axis stays allowed (it only extends a running move). */
+uint8_t fw_axis_command_gated(fw_axis_t *a, uint16_t cmd, bool start_blocked);
 uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd);        /* axis_command semantic, returns/stores cmd_result */
 uint8_t fw_axis_start_legacy(fw_axis_t *a);                 /* coil 0: relative move from the legacy values (axis X) */
 uint8_t fw_axis_start_physical(fw_axis_t *a);               /* START edge: X = legacy start, Y = START_REL from target_position */

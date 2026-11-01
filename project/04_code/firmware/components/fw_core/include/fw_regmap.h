@@ -22,6 +22,8 @@ enum { FW_CMD_START_ABS = 1, FW_CMD_START_REL = 2, FW_CMD_STOP = 3, FW_CMD_HOME 
        /* interface-spec 5.12 */
        FW_CMD_START_ABS_UNIT = 13, FW_CMD_START_REL_UNIT = 14, FW_CMD_TEST_POS = 15, FW_CMD_TEST_NEG = 16,
        FW_CMD_POINT_GO = 17, FW_CMD_POINT_TEACH = 18 };
+/* every command that can begin pulses: 1, 2, 13..17 (review R3-M1). TEST keepalive is a start command too. */
+static inline int fw_cmd_is_start(uint16_t cmd) { return cmd == FW_CMD_START_ABS || cmd == FW_CMD_START_REL || (cmd >= FW_CMD_START_ABS_UNIT && cmd <= FW_CMD_POINT_GO); }
 #define FW_TEST_KEEPALIVE_MS 500u   /* TEST_POS/NEG must be rewritten within this time, else decel stop (FR-032) */
 /* cmd_result */
 enum { FW_RES_OK = 0, FW_RES_BUSY_RUN = 1, FW_RES_ESTOP = 0x10, FW_RES_ALARM = 0x11, FW_RES_SERVO_OFF = 0x12,

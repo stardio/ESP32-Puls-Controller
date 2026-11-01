@@ -260,6 +260,16 @@ void fw_axis_decel_all_reason(fw_axis_t *a, uint16_t alarm_code)
     begin_decel(a, FW_SC_STOP_CMD);
 }
 
+uint8_t fw_axis_command_gated(fw_axis_t *a, uint16_t cmd, bool start_blocked)
+{
+    const bool keepalive = (cmd == FW_CMD_TEST_POS || cmd == FW_CMD_TEST_NEG) && fw_axis_running(a);
+    if (start_blocked && fw_cmd_is_start(cmd) && !keepalive) {
+        a->dev->ax[a->idx].cmd_result = FW_RES_RUNNING;
+        return FW_RES_RUNNING;
+    }
+    return fw_axis_command(a, cmd);
+}
+
 uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd)
 {
     fw_axis_tele_t *t = &TELE(a);

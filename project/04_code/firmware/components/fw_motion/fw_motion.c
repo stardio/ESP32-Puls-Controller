@@ -59,11 +59,7 @@ static uint8_t op_axis_cmd(void *ctx, uint8_t axis, uint16_t cmd)
 {
     (void)ctx;
     if (axis >= s_dev.axis_count) return FW_RES_RANGE;
-    if (start_blocked() && (cmd == FW_CMD_START_ABS || cmd == FW_CMD_START_REL)) {   /* no pulses while NVS is written */
-        s_dev.ax[axis].cmd_result = FW_RES_RUNNING;
-        return FW_RES_RUNNING;
-    }
-    return fw_axis_command(&s_ax[axis], cmd);
+    return fw_axis_command_gated(&s_ax[axis], cmd, start_blocked());   /* one gate for every start command (R3-M1) */
 }
 static uint8_t op_legacy_start(void *ctx)
 {
