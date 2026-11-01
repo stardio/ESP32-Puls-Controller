@@ -548,6 +548,7 @@ PULSE ____________________________|‾|_|‾|_|‾|_ ...      (첫 펄스는 방
 | +0x032 | max_rpm_calc | U16 | 1 MHz와 `max_speed` 중 작은 값으로 낼 수 있는 최고 rpm(마법사 판정용) |
 
 ### 포인트 테이블 (0x6000~, 저장)
+v1에서는 0x6000~0x6FFF '단독 운전 순서(FR-013)' 영역을 포인트 테이블로 쓴다(겹침 해소, 메인 세션 결정).
 축 n(0=X, 1=Y), 포인트 i(0~7): 기준 = 0x6000 + n×0x80 + i×0x10. +0 pos_unit S32, +2 speed_unit U32, +4 accel_ms U16, +5 decel_ms U16, +6 valid U16.
 
 ### 시스템 추가
@@ -556,7 +557,28 @@ PULSE ____________________________|‾|_|‾|_|‾|_ ...      (첫 펄스는 방
 | 0x0033 | wiring_status | U16 | R | b0 X STOP 정상(NC 닫힘), b1 X START 대기, b2 X 펄스 루프백 정상, b3 X 서보 ON 출력, b4~b7 Y축 동일, b8 이더넷 링크, b9 RTU 수신 정상, b15 점검 유효(FR-031) |
 | 0x0034 | alarm_hint | U16 | R | 현재 최우선 알람 코드(HMI가 한글 원인·조치 문구 표시, FR-033) |
 | 0x0130 | setup_done | U16 | R/W | 0 = 마법사 필요, 1 = 완료(저장, FR-030) |
-| sys_command 추가 | FACTORY_RESET(잠금 필요), NET_RESET(잠금 필요) | | | 공장 초기화, 네트워크 초기화(FR-035) |
+| sys_command 추가 | 7 FACTORY_RESET(잠금 필요), 8 NET_RESET(잠금 필요) | | | 공장 초기화, 네트워크 초기화(FR-035) |
 
 ### 하드웨어 네트워크 초기화
 부팅 직후 X축 START와 STOP 입력이 동시에 활성인 상태를 10초 유지하면 네트워크 설정을 공장값으로 되돌리고 재부팅한다(D-076).
+
+### 5.12 구현 확정 사항 (2026-11-01, coder 구현 반영, 레지스터 주소 변경 없음)
+출처: project/04_code/notes/firmware.md §13. 아래는 배정표에 없던 값을 구현 시 [권고]로 정한 것이다. 기존 맵과 겹친 곳은 없어 빈 오프셋 이동은 하지 않았다.
+
+| 항목 | 확정 |
+|---|---|
+| sys_command 번호 | 7 = FACTORY_RESET, 8 = NET_RESET (둘 다 `unlock_key` 필요, 축 운전 중 0x12, 잠금 0x11). 성공 시 0x0101=1(실행 중) 후 저장, 네트워크 워드는 REBOOT 후 적용. 한 번 쓰면 잠금 해제는 소모된다 |
+| 단위 변환 | 펄스 = 반올림(값 × pulses_per_rev × gear_num / (이동량 × gear_den)). 이동량 = lead_um(mm 모드) 또는 360000 m°(° 모드). 정수 128비트 중간값, 결과가 S32/U32를 넘으면 0x17. 단위→펄스 오차 0.5 펄스 이하 |
+| unit_mode 0 | 변환은 항등(단위 값 = 펄스/Hz). START_ABS_UNIT/REL_UNIT은 0x17, 포인트와 position_unit은 항등으로 동작 |
+| 변환 속도 한계 | 100 Hz ~ min(1 MHz, max_speed), start_speed가 있으면 그 이상. 벗어나면 0x17 |
+| position_unit | 현재 지령 위치의 변환값. S32를 넘으면 포화(INT32_MAX/MIN) |
+| max_rpm_calc | min(1 MHz, max_speed) × 60 / pulses_per_rev, 65535로 제한 |
+| target_unit, speed_unit, point_index | 운전 조작 영역(op 이미지)에 있어 기존 target/speed처럼 저장 이미지에 포함. point_index 범위 0~7(그 밖은 예외 03) |
+| 포인트 테이블 | +7은 예약 워드(읽기 0, 쓰기 예외 02). valid=1이면 speed_unit ≥ 1, accel_ms·decel_ms 10~60000이어야 쓰기 허용(예외 03). 한 번의 FC16으로 쓰거나 valid를 마지막에 쓴다. 1축 모델의 0x6080~은 예외 02. POINT_TEACH는 정지·위치 유효 상태에서만(0x13/0x16), 현재 위치, 현재 speed(Hz→단위), accel/decel을 저장 |
+| POINT_GO | valid=0이면 0x17. 절대 이동(위치 유효 조건은 START_ABS와 같음), 저장된 accel/decel 사용 |
+| TEST_POS/NEG | 속도 = test_rpm × pulses_per_rev / 60 Hz. 같은 명령을 500 ms 안에 다시 쓰면 유지(keepalive), 500 ms를 넘기면 감속 정지(이후 같은 명령은 정지 완료까지 0x13). 반대 방향 명령 0x13, STOP 입력 활성 0x10, 속도 범위 밖 0x17. 이동량은 INT32_MAX 펄스(상한) |
+| wiring_status 정의 | b0 = STOP 입력 비활성(NC 닫힘), b1 = START 입력 비활성(눌리지 않음 = 대기), b2 = 마지막 이동 중 PCNT 루프백 계수가 증가했고 불일치가 없음, b3 = DO1/DO2 구동값, b8 = link, b9 = RTU 모드에서 마지막 유효 프레임이 3 s 이내, b15 = STOP/START 입력 초기화 성공(아니면 b0~b7도 0) |
+| alarm_hint 우선순위 | 0x0101 > 0x0602 > 0x0701 > 0x0702 > 0x0401 > 0x0801 > 기타(작은 코드 먼저). 전 축의 현재 알람 코드 중에서 선택, 없으면 0 |
+| setup_done | 0/1만 허용(그 외 예외 03), 저장 이미지에 포함. FACTORY_RESET이 0으로 되돌림 |
+| 저장 이미지 버전 | FW_CFG_VERSION 1 → 2 (setup_done, 포인트 추가). 이전 이미지는 버전 불일치로 거부되고 기본값으로 시작한다 |
+| 하드웨어 네트워크 초기화 | 부팅 첫 샘플에서 X START와 X STOP이 모두 활성이고 이후 끊김 없이 10 s 유지되면 `net` 워드를 공장값(모델별 통신 모드 포함)으로 복원, 저장 후 재부팅. 중간에 한 번이라도 풀리면 그 부팅에서는 다시 동작하지 않는다 |
