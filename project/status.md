@@ -7,7 +7,7 @@
 | 단계 | 상태 | 주요 산출물 | 비고 |
 |---|---|---|---|
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
-| ② 요구사항 | 완료 | srs.md v0.8, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
+| ② 요구사항 | 완료 | srs.md v0.9, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
 | ③ 설계 | 진행중 | design-baseline-v0.4.md(v0.4.1, 현행 기준선), reviews/baseline-v0.4-review.md, bom-schematic.md v0.4, power-budget.md, schematic-reconciliation.md | 2축 실측(D-067) 후 G3. 시험 펌웨어 핀 수정 → 사용자 PC 실측 |
 | ④ 구현 | 진행중(예외) | 04_code/test-fw(시험, 리뷰 4차·T-15 추가), 04_code/firmware(2축 제품, 리뷰 2차 통과) | D-025·D-071 예외. 남은 것: ESP-IDF 실제 빌드, 보드 실측(T-03~T-09·T-11·T-12·T-15), Minor n-01·n-02 |
 | ⑤ 검증 | 대기 | – | |
@@ -20,7 +20,7 @@
 
 | 게이트 | 상태 | 기록 파일 |
 |---|---|---|
-| G2 요구사항 확정 | 승인 (2026-10-30), v0.8 변경 승인 (2026-10-31) | gates/G2-requirements.md, gates/G2-requirements-change-v0.8.md |
+| G2 요구사항 확정 | 승인 (2026-10-30), v0.8·v0.9 변경 승인 (2026-10-31, 2026-11-01) | gates/G2-requirements*.md |
 | G3 아키텍처·핵심 부품 | 미실시 | – |
 | G6 양산/출시·가격 | 미실시 | – |
 
