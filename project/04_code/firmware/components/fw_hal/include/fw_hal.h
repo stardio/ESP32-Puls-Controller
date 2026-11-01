@@ -60,6 +60,9 @@ uint16_t fw_hal_reset_reason(void);                          /* FW_RST_* of fw_p
 int      fw_hal_wdt_init(void);                              /* task watchdog, panic = reset */
 int      fw_hal_wdt_add_self(void);                          /* 0 = subscribed (review m-02) */
 void     fw_hal_wdt_feed(void);
+/* RTC no-init flag (survives a software reboot, garbage after power-up is rejected by a magic value) */
+void     fw_hal_nrreset_mark(void);                          /* set: network reset executed, reboot follows */
+bool     fw_hal_nrreset_take(void);                          /* true once if set; clears it */
 void     fw_hal_reboot(void);                                /* does not return */
 void     fw_hal_mac(uint8_t mac[6]);
 

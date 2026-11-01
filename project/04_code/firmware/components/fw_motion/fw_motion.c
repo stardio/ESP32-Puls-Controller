@@ -215,8 +215,9 @@ static void motion_task(void *arg)
             s_cl_tripped = any;
         }
         refresh_system(now);
-        if (fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, now)) {
-            ESP_LOGW(TAG, "boot hold START+STOP 10 s: network settings back to factory values, rebooting");
+        if (fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, (s_dev.boot_status & FW_BOOT_STOP_IO) != 0, now)) {
+            ESP_LOGW(TAG, "boot hold START+STOP 10 s then released: network settings back to factory values, rebooting");
+            fw_hal_nrreset_mark();                                    /* once only: the next boot ignores the hold */
             fw_cfg_net_reset(&s_dev.cfg, s_dev.model_rtu);
             fw_save_note_write(&s_save, now);                         /* dirty: the reboot path saves it first */
             fw_save_request(&s_save);
@@ -260,7 +261,7 @@ int fw_motion_start(const fw_motion_cfg_t *c)
     s_dev.fw_version = c->fw_version;
     s_dev.ops = (fw_dev_ops_t){op_axis_cmd, op_legacy_start, op_legacy_reset, op_sys_cmd, op_user_do, op_cfg_changed, NULL};
     fw_commloss_init(&s_cl, fw_hal_ms());
-    fw_nrhold_init(&s_nrhold);
+    fw_nrhold_init(&s_nrhold, fw_hal_nrreset_take());
     s_hb_ms = fw_hal_ms();
 
     /* reset cause (T-15) */
@@ -320,7 +321,7 @@ int fw_motion_start(const fw_motion_cfg_t *c)
     if (allowed == 0) for (unsigned a = 0; a < c->axis_count; ++a) fw_axis_servo_boot(&s_ax[a]);
     for (unsigned a = 0; a < c->axis_count; ++a) fw_axis_poll(&s_ax[a]);
     refresh_system(fw_hal_ms());
-    (void)fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, fw_hal_ms());   /* boot sample (D-076) */
+    (void)fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, (s_dev.boot_status & FW_BOOT_STOP_IO) != 0, fw_hal_ms());   /* boot sample (D-076) */
     ESP_LOGI(TAG, "boot_status 0x%04x, pulses %s", (unsigned)s_dev.boot_status, allowed == 0 ? "ALLOWED" : "PROHIBITED");
 
     if (xTaskCreate(motion_task, "fw_motion", 4096, NULL, 10, NULL) != pdPASS) {

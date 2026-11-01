@@ -11,7 +11,8 @@ static fw_dev_t D;
 static fw_axis_t AX[2];
 static int CFG_CHANGED, SYS_CMDS;
 
-static uint8_t o_axis(void *c, uint8_t a, uint16_t cmd) { (void)c; return fw_axis_command(&AX[a], cmd); }
+static bool BLOCKED;   /* stands for fw_motion start_blocked() (NVS write / reboot committed) */
+static uint8_t o_axis(void *c, uint8_t a, uint16_t cmd) { (void)c; return fw_axis_command_gated(&AX[a], cmd, BLOCKED); }
 static uint16_t o_sys(void *c, uint16_t cmd)
 {
     (void)c; SYS_CMDS++;
@@ -23,7 +24,7 @@ static void on_start(uint8_t a) { fw_axis_start_physical(&AX[a]); }
 
 static void setup(uint8_t axes, bool rtu)
 {
-    fake_reset(); CFG_CHANGED = SYS_CMDS = 0;
+    BLOCKED = false; fake_reset(); CFG_CHANGED = SYS_CMDS = 0;
     fw_dev_init(&D, axes, rtu);
     D.ops = (fw_dev_ops_t){o_axis, NULL, NULL, o_sys, NULL, o_cfg, NULL};
     D.boot_status = FW_BOOT_PULSE_X | FW_BOOT_PULSE_Y | FW_BOOT_STOP_IO | FW_BOOT_NVS | FW_BOOT_CFG_OK | FW_BOOT_WDT |
@@ -374,6 +375,18 @@ static void test_test_hold(void)
 }
 
 /* ---------------------------------------------------------------- FR-034 */
+/* R3-m1: the TEST decel is capped at 200 ms even if the operation decel is long */
+static void test_test_decel_cap(void)
+{
+    setup(1, false);
+    CHECK_EQ(wr1(BX + 0x47, 60000), 0);                                  /* op decel 60 s */
+    CHECK_EQ(wr1(BX + 0x40, FW_CMD_TEST_POS), 0); CHECK_EQ(reg(BX + 0x0B), FW_RES_OK);
+    fake_pulses(0, 20000); fw_axis_poll(&AX[0]);
+    FAKE_NOW += 501; fw_axis_poll(&AX[0]); CHECK(AX[0].mv == MV_DECEL);
+    CHECK(AX[0].prof.position > 20000u);
+    CHECK(AX[0].prof.position < 20000u + 3000u);                         /* ~ 10 kHz * 0.2 s / 2 = 1000 pulses, not 300000 */
+}
+
 static void test_points(void)
 {
     setup(2, false);
@@ -485,31 +498,94 @@ static void test_resets(void)
     CHECK_EQ(fw_sys_reset_cmd(&D, FW_SYS_SAVE, false), FW_SRES_REFUSED);
 }
 
+/* R3-M1: every start command is refused while saving / reboot is committed */
+static void test_start_blocked(void)
+{
+    static const uint16_t starts[] = {FW_CMD_START_ABS, FW_CMD_START_REL, FW_CMD_START_ABS_UNIT, FW_CMD_START_REL_UNIT,
+                                      FW_CMD_TEST_POS, FW_CMD_TEST_NEG, FW_CMD_POINT_GO};
+    for (unsigned i = 0; i < sizeof starts / sizeof starts[0]; ++i) {
+        CHECK(fw_cmd_is_start(starts[i]));
+        setup(1, false);
+        BLOCKED = true;
+        CHECK_EQ(wr1(BX + 0x40, starts[i]), 0);
+        CHECK_EQ(reg(BX + 0x0B), FW_RES_RUNNING);
+        CHECK(!FP[0].active); CHECK(!fw_axis_running(&AX[0]));
+    }
+    for (uint16_t c = 3; c <= 12; ++c) CHECK(!fw_cmd_is_start(c));
+    CHECK(!fw_cmd_is_start(FW_CMD_POINT_TEACH));
+    /* the same commands work once the block is gone */
+    setup(1, false); BLOCKED = true;
+    CHECK_EQ(wr1(BX + 0x40, FW_CMD_TEST_POS), 0); CHECK_EQ(reg(BX + 0x0B), FW_RES_RUNNING);
+    BLOCKED = false;
+    CHECK_EQ(wr1(BX + 0x40, FW_CMD_TEST_POS), 0); CHECK_EQ(reg(BX + 0x0B), FW_RES_OK); CHECK(FP[0].active);
+    /* block appears while a TEST runs: the keepalive is still accepted, STOP always works */
+    BLOCKED = true;
+    FAKE_NOW += 100; CHECK_EQ(wr1(BX + 0x40, FW_CMD_TEST_POS), 0); CHECK_EQ(reg(BX + 0x0B), FW_RES_OK);
+    CHECK_EQ(wr1(BX + 0x40, FW_CMD_STOP), 0); CHECK_EQ(reg(BX + 0x0B), FW_RES_OK);
+}
+
 static void test_boot_hold(void)
 {
     fw_nrhold_t h;
-    fw_nrhold_init(&h);
-    CHECK(!fw_nrhold_update(&h, true, true, 100));                      /* boot sample: both active */
-    CHECK(!fw_nrhold_update(&h, true, true, 5000));
-    CHECK(!fw_nrhold_update(&h, true, true, 100 + FW_NETRESET_HOLD_MS - 1));
-    CHECK(fw_nrhold_update(&h, true, true, 100 + FW_NETRESET_HOLD_MS));  /* exactly 10 s */
-    CHECK(!fw_nrhold_update(&h, true, true, 100 + FW_NETRESET_HOLD_MS + 1));   /* fires once */
+    const uint32_t T = FW_NETRESET_HOLD_MS;
+    /* normal use: hold 10 s, let go inside 30 s -> fires exactly once, at the release */
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 100));                 /* boot sample: both active */
+    CHECK(!fw_nrhold_update(&h, true, true, true, 5000));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 100 + T - 1));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 100 + T));             /* 10 s reached: armed, not yet fired */
+    CHECK(!fw_nrhold_update(&h, true, true, true, 100 + T + 5000));      /* still held */
+    CHECK(!fw_nrhold_update(&h, true, false, true, 100 + T + 6000));     /* only one released */
+    CHECK(fw_nrhold_update(&h, false, false, true, 100 + T + 7000));     /* both released: fire */
+    CHECK(!fw_nrhold_update(&h, false, false, true, 100 + T + 7100));    /* once */
+    CHECK(!fw_nrhold_update(&h, true, true, true, 100 + T + 8000));
+    CHECK(!fw_nrhold_update(&h, false, false, true, 100 + T + 9000));
+    /* broken NC STOP (always active) + START held or released: never fires, no matter how long */
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0));
+    CHECK(!fw_nrhold_update(&h, true, true, true, T + 1));
+    CHECK(!fw_nrhold_update(&h, true, true, true, T + 20000));
+    CHECK(!fw_nrhold_update(&h, false, true, true, T + 21000));          /* START released, STOP stays active */
+    CHECK(!fw_nrhold_update(&h, false, true, true, T + 29000));
+    CHECK(!fw_nrhold_update(&h, false, true, true, T + 50000));
+    /* START wired high all the time with STOP also: same */
+    CHECK(!fw_nrhold_update(&h, true, true, true, T + 90000));
+    /* release after the 30 s window is too late */
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, true, T));
+    CHECK(!fw_nrhold_update(&h, true, true, true, T + FW_NETRESET_RELEASE_MS));
+    CHECK(!fw_nrhold_update(&h, false, false, true, T + FW_NETRESET_RELEASE_MS + 1));
+    /* the last moment inside the window still counts */
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, true, T));
+    CHECK(fw_nrhold_update(&h, false, false, true, T + FW_NETRESET_RELEASE_MS));
+    /* RTC no-init flag: the boot after a reset ignores a held pair (no reset loop) */
+    fw_nrhold_init(&h, true);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, true, T));
+    CHECK(!fw_nrhold_update(&h, false, false, true, T + 100));
+    fw_hal_nrreset_mark(); CHECK(fw_hal_nrreset_take()); CHECK(!fw_hal_nrreset_take());   /* flag is consumed once */
+    /* STOP/START input init failed: never */
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, false, 0)); CHECK(!fw_nrhold_update(&h, true, true, false, T));
+    CHECK(!fw_nrhold_update(&h, false, false, false, T + 100));
     /* released before 10 s cancels for good, even if pressed again */
-    fw_nrhold_init(&h);
-    CHECK(!fw_nrhold_update(&h, true, true, 0));
-    CHECK(!fw_nrhold_update(&h, true, false, 3000));
-    CHECK(!fw_nrhold_update(&h, true, true, 4000));
-    CHECK(!fw_nrhold_update(&h, true, true, 20000));
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0));
+    CHECK(!fw_nrhold_update(&h, true, false, true, 3000));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 4000));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 20000));
+    CHECK(!fw_nrhold_update(&h, false, false, true, 21000));
     /* only one input at boot: never */
-    fw_nrhold_init(&h);
-    CHECK(!fw_nrhold_update(&h, true, false, 0)); CHECK(!fw_nrhold_update(&h, true, true, 1)); CHECK(!fw_nrhold_update(&h, true, true, 20000));
-    fw_nrhold_init(&h);
-    CHECK(!fw_nrhold_update(&h, false, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, 20000));
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, false, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, true, 1)); CHECK(!fw_nrhold_update(&h, true, true, true, 20000));
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, false, true, true, 0)); CHECK(!fw_nrhold_update(&h, true, true, true, 20000));
     /* millisecond counter wrap */
-    fw_nrhold_init(&h);
-    CHECK(!fw_nrhold_update(&h, true, true, 0xFFFFFF00u));
-    CHECK(!fw_nrhold_update(&h, true, true, 5000));
-    CHECK(fw_nrhold_update(&h, true, true, 0xFFFFFF00u + FW_NETRESET_HOLD_MS));
+    fw_nrhold_init(&h, false);
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0xFFFFFF00u));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 5000));
+    CHECK(!fw_nrhold_update(&h, true, true, true, 0xFFFFFF00u + T));
+    CHECK(fw_nrhold_update(&h, false, false, true, 0xFFFFFF00u + T + 3000));
     /* net reset helper keeps non-network settings */
     fw_cfg_t c; fw_cfg_defaults_model(&c, false);
     fw_set32(c.net, FW_N_IP, 0x0A000001); c.par[0][FW_P_UNIT_MODE] = 2; c.setup_done = 1; c.net[FW_N_COMM_MODE] = 1;
@@ -532,6 +608,6 @@ int main(void)
 {
     RUN(test_unit_basic_and_rounding); RUN(test_unit_boundaries_and_overflow); RUN(test_unit_roundtrip);
     RUN(test_unit_commands); RUN(test_setup_done_and_max_rpm); RUN(test_wiring_status); RUN(test_alarm_hint);
-    RUN(test_test_hold); RUN(test_points); RUN(test_resets); RUN(test_boot_hold); RUN(test_regression_defaults);
+    RUN(test_test_hold); RUN(test_test_decel_cap); RUN(test_points); RUN(test_resets); RUN(test_start_blocked); RUN(test_boot_hold); RUN(test_regression_defaults);
     SUMMARY();
 }

@@ -194,3 +194,7 @@ esp_err_t esp_netif_attach(esp_netif_t *n, void *glue); esp_err_t esp_netif_dhcp
 esp_err_t esp_netif_set_ip_info(esp_netif_t *n, const esp_netif_ip_info_t *i);
 esp_err_t esp_event_handler_register(esp_event_base_t b, int32_t id, void (*h)(void *, esp_event_base_t, int32_t, void *), void *arg);
 #endif
+
+#ifndef RTC_NOINIT_ATTR
+#define RTC_NOINIT_ATTR __attribute__((section(".rtc_noinit")))   /* esp_attr.h */
+#endif

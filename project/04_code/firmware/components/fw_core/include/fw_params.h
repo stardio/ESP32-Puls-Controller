@@ -90,13 +90,16 @@ enum { FW_PT_POS = 0, FW_PT_SPEED = 2, FW_PT_ACCEL = 4, FW_PT_DECEL = 5, FW_PT_V
 bool fw_point_validate(const uint16_t *pt);
 void fw_cfg_net_reset(fw_cfg_t *c, bool model_rtu);   /* network words := factory values (D-059 mode default for the model) */
 
-/* ---- hardware network reset (D-076): X START + X STOP both active from the first sample after boot, held 10 s ---- */
+/* ---- hardware network reset (D-076, review R3-M2): at boot X START + X STOP both active for 10 s, then both inactive
+ * again within 30 s (the user let go) -> reset once. A broken NC STOP stays active, so it never fires. ---- */
 #define FW_NETRESET_HOLD_MS 10000u
-typedef struct { uint8_t state; uint32_t since_ms; } fw_nrhold_t;     /* state 0 new, 1 holding, 2 cancelled, 3 fired */
-void fw_nrhold_init(fw_nrhold_t *h);
-/* call periodically; the first call is the boot sample. Returns true exactly once, when the hold reached 10 s. Any sample
- * with one of the inputs inactive cancels for good (the hold must start at boot and be continuous). */
-bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, uint32_t now_ms);
+#define FW_NETRESET_RELEASE_MS 30000u
+typedef struct { uint8_t state; uint32_t since_ms; } fw_nrhold_t;     /* 0 new, 1 holding, 4 armed, 2 cancelled, 3 fired */
+/* suppressed = the RTC no-init flag says the previous boot already did this reset: no detection in this boot. */
+void fw_nrhold_init(fw_nrhold_t *h, bool suppressed);
+/* call periodically; the first call is the boot sample. io_ok = STOP/START input init succeeded (else never). Returns true
+ * exactly once, at the moment both inputs are inactive inside the release window. */
+bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, bool io_ok, uint32_t now_ms);
 
 /* ---- communication mode (D-056, D-059) ---- */
 enum { FW_MODE_TCP = 0, FW_MODE_RTU = 1 };

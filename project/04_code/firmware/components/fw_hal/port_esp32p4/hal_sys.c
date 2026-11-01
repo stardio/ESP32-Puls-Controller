@@ -1,5 +1,6 @@
 /* fw_hal system services for ESP32-P4: time, delays, reset reason (T-15), task watchdog, reboot, MAC. */
 #include "sdkconfig.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_rom_sys.h"
@@ -11,6 +12,16 @@
 #include "fw_params.h"
 
 static const char *TAG = "FW_SYS";
+
+#define NRRESET_MAGIC 0x4E525354u
+static RTC_NOINIT_ATTR uint32_t s_nrreset_flag;
+void fw_hal_nrreset_mark(void) { s_nrreset_flag = NRRESET_MAGIC; }
+bool fw_hal_nrreset_take(void)
+{
+    const bool set = (esp_reset_reason() == ESP_RST_SW) && s_nrreset_flag == NRRESET_MAGIC;   /* power-up: RTC content is not trusted */
+    s_nrreset_flag = 0;
+    return set;
+}
 
 uint32_t fw_hal_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 void fw_hal_delay_us(uint32_t us) { if (us) esp_rom_delay_us(us); }

@@ -103,6 +103,9 @@ int fw_hal_wdt_init(void) { return 0; }
 int fw_hal_wdt_add_self(void) { return 0; }
 void fw_hal_wdt_feed(void) {}
 void fw_hal_reboot(void) {}
+static bool nr_flag;
+void fw_hal_nrreset_mark(void) { nr_flag = true; }
+bool fw_hal_nrreset_take(void) { bool f = nr_flag; nr_flag = false; return f; }
 void fw_hal_mac(uint8_t m[6]) { memset(m, 0, 6); }
 int fw_hal_store_init(void) { return 0; }
 int fw_hal_store_read(void *b, size_t *l) { (void)b; (void)l; return FW_ST_NOT_FOUND; }

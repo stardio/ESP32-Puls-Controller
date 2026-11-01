@@ -193,17 +193,22 @@ bool fw_point_validate(const uint16_t *pt)
            pt[FW_PT_DECEL] >= 10u && pt[FW_PT_DECEL] <= 60000u;
 }
 
-void fw_nrhold_init(fw_nrhold_t *h) { h->state = 0; h->since_ms = 0; }
-bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, uint32_t now_ms)
+void fw_nrhold_init(fw_nrhold_t *h, bool suppressed) { h->state = suppressed ? 2 : 0; h->since_ms = 0; }
+bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, bool io_ok, uint32_t now_ms)
 {
     const bool both = x_start_active && x_stop_active;
+    const bool none = !x_start_active && !x_stop_active;
     switch (h->state) {
-    case 0:
-        if (both) { h->state = 1; h->since_ms = now_ms; } else h->state = 2;
+    case 0:                                                   /* boot sample */
+        if (io_ok && both) { h->state = 1; h->since_ms = now_ms; } else h->state = 2;
         return false;
-    case 1:
+    case 1:                                                   /* (a) holding both */
         if (!both) { h->state = 2; return false; }
-        if ((uint32_t)(now_ms - h->since_ms) >= FW_NETRESET_HOLD_MS) { h->state = 3; return true; }
+        if ((uint32_t)(now_ms - h->since_ms) >= FW_NETRESET_HOLD_MS) { h->state = 4; h->since_ms = now_ms; }
+        return false;
+    case 4:                                                   /* (b) wait for release of both, within the window */
+        if ((uint32_t)(now_ms - h->since_ms) > FW_NETRESET_RELEASE_MS) { h->state = 2; return false; }
+        if (none) { h->state = 3; return true; }              /* (c) fire once; a broken NC STOP never reads inactive */
         return false;
     default: return false;
     }

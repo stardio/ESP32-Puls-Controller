@@ -214,12 +214,14 @@ D-059에 따라 RTU 모델의 출하 기본 통신 모드는 RTU다. 모델 4종
 **주소 충돌 없음, 이동 없음.** §5.12 배정을 그대로 사용했다. 확인한 점: 축 +0x140~0x147은 par 이미지(0x12C~0x13F 미사용)와 겹치지 않고, +0x04A~0x04E는 op 이미지(0x040~0x04F)의 빈 칸, +0x030/0x032는 축 데이터 빈 칸, 0x0033/0x0034/0x0130은 시스템 블록 빈 칸(0x0130은 0x0120 user_do와 별도 항목), 0x6000~0x60FF는 새 영역. 배정표에 번호가 없던 sys_command 값만 7 = FACTORY_RESET, 8 = NET_RESET으로 정했다. 구현 확정 사항을 interface-spec §5.12 끝에 추가했다(주소 표는 수정하지 않음).
 
 ### 13.3 설계와 다른 점 / [권고] 기본값
-1. **저장 이미지 버전 1 → 2.** setup_done과 포인트가 이미지에 들어가 구조체 크기가 바뀐다. 이전 이미지는 거부되어 기본값으로 시작(개발 단계라 이전 이미지가 없다고 [가정]).
+1. **저장 이미지 버전 1 → 2.** setup_done과 포인트가 이미지에 들어가 구조체 크기가 바뀐다. 이전 이미지는 거부된다. **v2 첫 부팅: E-PARAM 알람, IP 공장값(192.168.0.220), 운전 금지 → 재설정 후 SAVE** (R3-m2; 업데이트 안내에 포함. 개발 단계라 이전 이미지가 없다고 [가정]).
+1-1. **시작 계열 명령 전체(1, 2, 13~17)가 하나의 검사 `fw_axis_command_gated`를 거친다**(R3-M1): 저장 중·재부팅 확정 후에는 0x12(RUNNING)로 거부, 이미 운전 중인 TEST keepalive만 허용, STOP 등 비시작 명령은 항상 허용. 물리 START·레거시 START는 기존대로 `start_blocked()`를 쓴다.
+1-2. **TEST 감속 = min(운전 조작 decel, 200 ms)** [권고] (R3-m1, `FW_TEST_DECEL_MAX_MS`). 데드맨 키를 뗀 뒤 오래 움직이지 않게 한다.
 2. unit_mode 0(펄스)에서 변환은 항등, START_*_UNIT는 0x17 [권고]: 펄스 모드 사용자가 단위 명령을 쓸 이유가 없고 오해를 막는다.
 3. 단위 속도가 `speed` 파라미터와 같은 한계(100 Hz 이상, max_speed 이하)를 따르게 했다. 설계서는 "1 MHz 또는 max_speed 초과 시 0x17"만 적었고 하한은 저장 속도 범위와 맞춘 것 [권고].
 4. wiring_status b1을 "START 눌리지 않음"으로 해석했다(설계서 문구 "START 대기"). 눌림 확인용 비트가 필요하면 설계 변경 사항이다(이슈 1).
 5. b2는 "마지막 이동에서 PCNT가 센 펄스가 있고 계수 불일치가 없음"이다. 이동 전에는 0이다. 실제 펄스 핀 단선은 이 방식으로 이동하기 전에는 알 수 없다(이슈 2).
-6. 하드웨어 네트워크 초기화의 "부팅 직후"를 "`fw_motion_start` 끝의 첫 샘플부터 끊김 없이 10 s"로 구현했다. START 입력 디바운스 없이 `di_raw` 원시값을 쓴다.
+6. 하드웨어 네트워크 초기화(리뷰 3차 R3-M2로 개정): `fw_motion_start` 끝의 첫 샘플부터 START+STOP 동시 활성 10 s, 이후 30 s 안에 두 입력이 모두 비활성이 되는 순간 1회 실행. STOP 단선(항상 활성)은 해제 조건을 만족하지 못해 오발동·재부팅 루프가 없다. RTC no-init 플래그(`fw_hal_nrreset_mark/take`, 소프트 리셋 + 매직값일 때만 유효)로 다음 부팅은 감지하지 않는다. `FW_BOOT_STOP_IO`=0이면 감지하지 않는다(R3-m3). START 입력 디바운스 없이 `di_raw` 원시값을 쓴다.
 7. TEST 이동량은 INT32_MAX 펄스로 한정했다(약 2^31 펄스). 최고 1 MHz에서도 35분 이상이라 실제로 끝나지 않는다.
 8. 이 구현에서 `target_unit`/`speed_unit`/`point_index`는 op 이미지라 저장 대상이 된다(기존 target/speed와 같은 취급).
 
@@ -264,3 +266,26 @@ test_beginner.c: 148838 checks, 0 failures   (신규 12개 시험)
 - sys_command: **FACTORY_RESET = 7, NET_RESET = 8** (펌웨어 값과 PC 도구 값이 같다. 변경 없음).
 - 포인트 테이블 0x6000~은 v1에서 "단독 운전 순서(FR-013)" 영역을 대체한다(같은 영역을 포인트 테이블로 사용, 순서 운전 기능은 v1 펌웨어에 없다).
 - 알람 **0x0603 E-PE-FAULTPATH** 추가(`FW_AL_PE_FAULTPATH`): 축의 MCPWM fault 경로가 묶이지 않았을 때(`boot_status` b6/b7 = 0) 이전의 0x0602 대신 보고한다. 운전 금지 동작은 그대로. alarm_hint 우선순위는 0x0602와 같은 단계(0x0101 > 0x0602 = 0x0603 > 0x0701 …). 기존 시험 `test_axis.c` 344행의 기대 코드를 0x0602 → 0x0603으로 바꿨다(삭제 아님). 펄스 엔진 미생성·WDT 미구독은 0x0602 유지.
+
+### 13.7 리뷰 3차 반영 (2026-11-01)
+| ID | 처리 | 내용 |
+|---|---|---|
+| R3-M1 | 반영 | `fw_cmd_is_start()`(fw_regmap.h)와 `fw_axis_command_gated()`(fw_axis.c). fw_motion.c의 `op_axis_cmd`는 이것만 호출. 시험 test_start_blocked: 1, 2, 13, 14, 15, 16, 17 각각 저장 중 0x12 거부·펄스 없음, 해제 후 정상, TEST keepalive 허용, STOP 허용 |
+| R3-M2 | 반영, 수정안과 다름 | 리뷰 수정안은 "10 s 뒤 STOP 해제 5 s 안"이었으나 사용자 지시에 따라 "두 입력 모두 비활성 복귀, 30 s 안"으로 구현(STOP 단독 해제가 아니라 둘 다 놓음). 루프 차단은 RTC no-init 플래그로 한다. net이 이미 공장값이면 저장·재부팅을 생략하는 안은 지시에 없어 넣지 않았다 |
+| R3-m1 | 반영 | TEST 감속 상한 200 ms [권고]. 시험 test_test_decel_cap |
+| R3-m2 | 반영 | 13.3 항목 1에 기록 |
+| R3-m3 | 반영 | `fw_nrhold_update`의 `io_ok` 인자 = `FW_BOOT_STOP_IO` |
+| R3-m4 | 반영 | pc-tool/svtool/regmap.py 주석 수정 |
+
+변경 파일: fw_regmap.h, fw_axis.[ch], fw_params.[ch], fw_hal.h, port_esp32p4/hal_sys.c(RTC_NOINIT_ATTR), fw_motion.c, tests(fake_hal.c, idf_stub/stub_idf.h에 RTC_NOINIT_ATTR 정의, test_beginner.c). 스펙 밖 수정: interface-spec §5.12 표 1행과 decisions D-076 문구(사용자 지시).
+
+시험 (실제 실행): `make -C project/04_code/tests/firmware run`
+```
+test_core.c: 8689 checks, 0 failures
+test_regmap.c: 459 checks, 0 failures
+test_axis.c: 259 checks, 0 failures
+test_beginner.c: 148942 checks, 0 failures
+```
+`make pytest`(test_cfg_syntax.py): 32 passed. pc-tool pytest: 31 passed. 중간에 test_cfg_syntax가 13건 실패했다: 새 `RTC_NOINIT_ATTR`가 시험용 IDF 스텁에 없었기 때문이며 스텁에 정의를 추가해 해결(펌웨어 결함 아님).
+boot_hold 시험 확장: 정상 조작 1회 발동, STOP 단선+START 해제/유지 시 미발동, 30 s 창 경계, RTC 플래그 억제·1회 소모, io_ok=0, ms 랩. §13.4의 test_beginner 건수 148,838은 오기이며 현재 값은 위와 같다.
+증명하지 않는 것: `fw_motion.c`의 실제 task 루프에서 플래그 mark와 reboot 순서(IDF 의존, 구문 검사만), 실제 `RTC_NOINIT` 동작(HIL).

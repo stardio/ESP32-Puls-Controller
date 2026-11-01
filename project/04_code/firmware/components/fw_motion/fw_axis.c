@@ -214,7 +214,8 @@ static uint8_t cmd_test(fw_axis_t *a, bool forward)
     }
     if (!fw_test_hz(PAR(a), &hz) || !speed_ok(a, hz)) return reject(a, FW_RES_RANGE, false);
     if (a->mv != MV_IDLE) return reject(a, FW_RES_RUNNING, false);
-    const uint8_t r = start_move(a, forward, (uint32_t)INT32_MAX, hz, OP(a)[FW_O_ACCEL], OP(a)[FW_O_DECEL]);
+    const uint16_t dec = OP(a)[FW_O_DECEL] < FW_TEST_DECEL_MAX_MS ? OP(a)[FW_O_DECEL] : FW_TEST_DECEL_MAX_MS;   /* R3-m1 */
+    const uint8_t r = start_move(a, forward, (uint32_t)INT32_MAX, hz, OP(a)[FW_O_ACCEL], dec);
     if (r == FW_RES_OK) { a->test_active = true; a->test_forward = forward; a->test_last_ms = fw_hal_ms(); }
     return r;
 }
