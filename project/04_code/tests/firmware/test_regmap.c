@@ -169,7 +169,7 @@ static void test_system_cfg_and_commands(void)
     CHECK_EQ(wr1(0x112, 2), 3); CHECK_EQ(wr1(0x110, 2), 3);
     CHECK_EQ(wr1(0x100, FW_SYS_SAVE), 0); CHECK_EQ(R.last_sys, FW_SYS_SAVE);
     CHECK_EQ(wr1(0x100, FW_SYS_STOP_ALL), 0); CHECK_EQ(R.last_sys, FW_SYS_STOP_ALL);
-    CHECK_EQ(wr1(0x100, 7), 3); CHECK_EQ(wr1(0x100, 0x100), 3);        /* 0x100 is internal, not writable here */
+    CHECK_EQ(wr1(0x100, 9), 3); CHECK_EQ(wr1(0x100, 0x100), 3);        /* 0x100 is internal, not writable here */ /* 7, 8 = FACTORY_RESET, NET_RESET since 5.12 */
     CHECK_EQ(reg(0x100), 0);                                            /* sys_command reads 0 */
     CHECK_EQ(wr1(0x101, 0), 2);                                         /* sys_cmd_result read-only */
     /* unlock key with a 10 s window */
@@ -210,7 +210,7 @@ static void test_axis_area_layout(void)
     CHECK_EQ(rd(3, 0x1300, 1), 2);
     CHECK_EQ(rd(3, 0x3000 + 0x100, 1), 2);
     CHECK_EQ(rd(3, 0x5000, 1), 2);                                      /* firmware-update window: not in this firmware */
-    CHECK_EQ(rd(3, 0x6000, 1), 2);
+    CHECK_EQ(rd(3, 0x6100, 1), 2);
     CHECK_EQ(rd(4, 0x1000, 1), 0);                                      /* FC04 answers like FC03 */
 }
 
@@ -290,7 +290,7 @@ static void test_commands(void)
         CHECK_EQ(R.axis_cmd_n, n0 + (unsupported ? 0 : 1));
         if (unsupported) CHECK_EQ(D.ax[0].cmd_result, FW_RES_RANGE);    /* HOME / JOG are not part of v1 */
     }
-    CHECK_EQ(wr1(0x1040, 13), 3);
+    CHECK_EQ(wr1(0x1040, 19), 3);
     /* axis coils: 0x10 * n */
     CHECK_EQ(coil_w(0x12, true), 0); CHECK_EQ(R.last_axis, 0); CHECK_EQ(R.last_cmd, FW_CMD_STOP);
     CHECK_EQ(coil_w(0x22, true), 0); CHECK_EQ(R.last_axis, 1);

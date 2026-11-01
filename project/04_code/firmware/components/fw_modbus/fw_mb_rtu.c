@@ -42,6 +42,7 @@ static void rtu_task(void *arg)
     for (;;) {
         const size_t n = rtu_receive(buf);
         if (!n) continue;
+        fw_motion_note_rtu_rx();
         const bool broadcast = buf[0] == 0;
         const uint8_t fc = buf[1];
         if (broadcast && !(fc == 5 || fc == 6 || fc == 15 || fc == 16)) continue;     /* broadcast: writes only, no reply */

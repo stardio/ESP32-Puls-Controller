@@ -6,16 +6,16 @@ enum {
     I_NONE = 0,
     /* system status 0x0020.. */
     I_MODEL, I_AXISCNT, I_FWVER, I_REGVER, I_SYSST, I_ESTOP, I_CLIENTS, I_UPTIME, I_HB, I_SYSIN, I_RSTR, I_BOOT,
-    I_MODEA, I_ALMASK, I_DIRAW, I_DOST,
+    I_MODEA, I_ALMASK, I_DIRAW, I_DOST, I_WIRING, I_ALHINT,
     /* 0x0100.. */
-    I_SYSCMD, I_SYSRES, I_UNLOCK, I_USERDO,
+    I_SYSCMD, I_SYSRES, I_UNLOCK, I_USERDO, I_SETUP,
     /* alarm history */
     I_HISTCNT, I_HISTLAT,
     /* network */
     I_MAC0, I_MAC1, I_MAC2, I_NETAPPLY,
     /* axis data / diag / command */
     A_STATE, A_STATUS, A_CMDPOS, A_CMDSPD, A_TGTACT, A_ALARM, A_STOPCAUSE, A_INPUTS, A_CMDRES, A_MOVECNT, A_PULSES,
-    A_CMD, A_ALARM2, A_ALCOUNT, A_UNDERRUN, A_SEGLAT, A_HOMELATCH
+    A_CMD, A_POSUNIT, A_MAXRPM, A_ALARM2, A_ALCOUNT, A_UNDERRUN, A_SEGLAT, A_HOMELATCH
 };
 typedef struct { uint16_t off; uint8_t words; uint8_t id; } itm_t;
 
@@ -23,7 +23,7 @@ static const itm_t SYSI[] = {
     {0x0020, 1, I_MODEL}, {0x0021, 1, I_AXISCNT}, {0x0022, 2, I_FWVER}, {0x0024, 1, I_REGVER}, {0x0025, 1, I_SYSST},
     {0x0026, 1, I_ESTOP}, {0x0027, 1, I_CLIENTS}, {0x0028, 2, I_UPTIME}, {0x002A, 1, I_HB}, {0x002B, 1, I_SYSIN},
     {0x002C, 1, I_RSTR}, {0x002D, 1, I_BOOT}, {0x002E, 1, I_MODEA}, {0x0030, 1, I_ALMASK}, {0x0031, 1, I_DIRAW},
-    {0x0032, 1, I_DOST},
+    {0x0032, 1, I_DOST}, {0x0033, 1, I_WIRING}, {0x0034, 1, I_ALHINT}, {0x0130, 1, I_SETUP},
     {0x0100, 1, I_SYSCMD}, {0x0101, 1, I_SYSRES}, {0x0102, 1, I_UNLOCK}, {0x0120, 1, I_USERDO},
     {0x3000, 1, I_HISTCNT}, {0x3001, 1, I_HISTLAT},
     {0x4007, 1, I_MAC0}, {0x4008, 1, I_MAC1}, {0x4009, 1, I_MAC2}, {0x400F, 1, I_NETAPPLY},
@@ -31,7 +31,7 @@ static const itm_t SYSI[] = {
 static const itm_t AXI[] = {   /* offsets relative to B */
     {0x000, 1, A_STATE}, {0x001, 1, A_STATUS}, {0x002, 2, A_CMDPOS}, {0x004, 2, A_CMDSPD}, {0x006, 2, A_TGTACT},
     {0x008, 1, A_ALARM}, {0x009, 1, A_STOPCAUSE}, {0x00A, 1, A_INPUTS}, {0x00B, 1, A_CMDRES}, {0x00C, 2, A_MOVECNT},
-    {0x00E, 2, A_PULSES}, {0x040, 1, A_CMD},
+    {0x00E, 2, A_PULSES}, {0x030, 2, A_POSUNIT}, {0x032, 1, A_MAXRPM}, {0x040, 1, A_CMD},
     {0x200, 1, A_ALARM2}, {0x201, 1, A_ALCOUNT}, {0x202, 2, A_UNDERRUN}, {0x204, 1, A_SEGLAT}, {0x205, 2, A_HOMELATCH},
 };
 #define NSYS ((unsigned)(sizeof(SYSI) / sizeof(SYSI[0])))
@@ -45,7 +45,7 @@ static const itm_t *find_itm(const itm_t *t, unsigned n, unsigned addr)
 }
 
 /* where does an address live */
-typedef enum { R_UNDEF = 0, R_LEGACY, R_SYSBLK, R_CMDBLK, R_AXIS, R_HIST, R_NET } region_t;
+typedef enum { R_UNDEF = 0, R_LEGACY, R_SYSBLK, R_CMDBLK, R_AXIS, R_HIST, R_NET, R_POINT } region_t;
 typedef struct { region_t r; int axis; unsigned off; } loc_t;
 
 static loc_t locate(const fw_dev_t *d, unsigned a)
@@ -56,6 +56,12 @@ static loc_t locate(const fw_dev_t *d, unsigned a)
     if (a >= 0x0100 && a <= 0x01FF) { l.r = R_CMDBLK; return l; }
     if (a >= 0x3000 && a <= 0x30FF) { l.r = R_HIST; return l; }
     if (a >= 0x4000 && a <= 0x40FF) { l.r = R_NET; l.off = a - 0x4000; return l; }
+    if (a >= 0x6000 && a <= 0x60FF) {                      /* point table: axis n at 0x6000 + n*0x80 (5.12) */
+        const int ax = (int)((a - 0x6000) >> 7);
+        if (ax >= (int)d->axis_count) return l;
+        l.r = R_POINT; l.axis = ax; l.off = a - 0x6000;
+        return l;
+    }
     if (a >= 0x1000 && a <= 0x2FFF) {
         const int ax = (int)(a >> 12) - 1;
         if (ax >= (int)d->axis_count) return l;          /* 1-axis model: axis 2 area -> exception 02 */
@@ -70,6 +76,63 @@ static loc_t locate(const fw_dev_t *d, unsigned a)
 bool fw_dev_unlocked(const fw_dev_t *d)
 {
     return d->unlock_active && (int32_t)(d->unlock_deadline_ms - d->now_ms) > 0;
+}
+
+static unsigned alarm_rank(uint16_t c)       /* lower = more urgent: safety first, then hardware, config, comm */
+{
+    switch (c) {
+    case FW_AL_ESTOP: return 0;
+    case FW_AL_PE_HW: return 1;
+    case FW_AL_PE_FAULTPATH: return 1;
+    case FW_AL_PARAM: return 2;
+    case FW_AL_NVM: return 3;
+    case FW_AL_COMMLOSS: return 4;
+    case FW_AL_WDT: return 5;
+    default: return 6;
+    }
+}
+uint16_t fw_alarm_hint(const fw_dev_t *d)
+{
+    uint16_t best = FW_AL_NONE;
+    for (unsigned a = 0; a < d->axis_count; ++a) {
+        const uint16_t c = d->ax[a].alarm_code;
+        if (c == FW_AL_NONE) continue;
+        if (best == FW_AL_NONE || alarm_rank(c) < alarm_rank(best) || (alarm_rank(c) == alarm_rank(best) && c < best)) best = c;
+    }
+    return best;
+}
+
+#define FW_RTU_RX_OK_MS 3000u        /* [recommended] b9 stays set this long after the last valid RTU frame */
+void fw_dev_note_rtu_rx(fw_dev_t *d) { d->rtu_rx_seen = true; d->rtu_rx_ms = d->now_ms; }
+uint16_t fw_wiring_status(const fw_dev_t *d)
+{
+    uint16_t w = 0;
+    const bool valid = (d->boot_status & FW_BOOT_STOP_IO) != 0;          /* di_raw is only meaningful when the I/O came up */
+    if (valid) {
+        w |= FW_WIRING_VALID;
+        for (unsigned a = 0; a < d->axis_count; ++a) {
+            const unsigned sh = 4u * a, start_bit = 4u * a, stop_bit = 4u * a + 1u;
+            if (!((d->di_raw >> stop_bit) & 1u)) w |= (uint16_t)(1u << sh);                 /* NC contact closed */
+            if (!((d->di_raw >> start_bit) & 1u)) w |= (uint16_t)(2u << sh);                /* START idle (not pressed) */
+            if (d->ax[a].loop_seen) w |= (uint16_t)(4u << sh);
+            if ((d->do_state >> a) & 1u) w |= (uint16_t)(8u << sh);                         /* DO1/DO2 servo ON driven */
+        }
+    }
+    if (d->link) w |= 1u << 8;
+    if (d->comm_mode_active == FW_MODE_RTU && d->rtu_rx_seen && (uint32_t)(d->now_ms - d->rtu_rx_ms) <= FW_RTU_RX_OK_MS)
+        w |= 1u << 9;
+    return w;
+}
+
+uint16_t fw_sys_reset_cmd(fw_dev_t *d, uint16_t cmd, bool any_axis_running)
+{
+    if (cmd != FW_SYS_FACTORY_RESET && cmd != FW_SYS_NET_RESET) return FW_SRES_REFUSED;
+    if (!fw_dev_unlocked(d)) return FW_SRES_LOCKED;
+    if (any_axis_running) return FW_SRES_AXIS_RUNNING;
+    if (cmd == FW_SYS_FACTORY_RESET) fw_cfg_defaults_model(&d->cfg, d->model_rtu);     /* D-059: the RTU model keeps RTU */
+    else fw_cfg_net_reset(&d->cfg, d->model_rtu);
+    d->unlock_active = false;                                  /* one-shot: a second reset needs a new unlock */
+    return FW_SRES_RUNNING_CMD;                                /* applied after SAVE + REBOOT (network words) */
 }
 
 void fw_hist_push(fw_dev_t *d, uint16_t code, uint16_t axis)
@@ -109,6 +172,9 @@ static uint32_t item_val(const fw_dev_t *d, int ax, uint8_t id)
     case I_DIRAW: return d->di_raw;
     case I_DOST: return d->do_state;
     case I_USERDO: return d->user_do;
+    case I_WIRING: return fw_wiring_status(d);
+    case I_ALHINT: return fw_alarm_hint(d);
+    case I_SETUP: return d->cfg.setup_done;
     case I_SYSRES: return d->sys_cmd_result;
     case I_HISTCNT: return d->hist_count;
     case I_HISTLAT: return 0;                           /* index of the newest entry: entry 0 is always the newest */
@@ -126,6 +192,8 @@ static uint32_t item_val(const fw_dev_t *d, int ax, uint8_t id)
     case A_CMDRES: return t->cmd_result;
     case A_MOVECNT: return t->move_count;
     case A_PULSES: return t->pulses_done;
+    case A_POSUNIT: return (uint32_t)fw_pulses_to_unit_sat(d->cfg.par[ax < 0 ? 0 : ax], t->cmd_position);
+    case A_MAXRPM: return fw_max_rpm_calc(d->cfg.par[ax < 0 ? 0 : ax]);
     case A_ALCOUNT: return t->alarm_count;
     default: return 0;                                  /* write-only commands read 0, unimplemented diag = 0 */
     }
@@ -197,6 +265,11 @@ int fw_reg_read(const fw_dev_t *d, uint16_t addr, uint16_t *out)
         it = find_itm(SYSI, NSYS, addr);
         *out = it ? (uint16_t)item_val(d, -1, it->id) : 0;
         return 0;
+    case R_POINT: {
+        const unsigned i = (l.off >> 4) & 7u, w = l.off & 0xFu;
+        *out = w < FW_PT_WORDS ? d->cfg.pt[l.axis][i][w] : 0;
+        return 0;
+    }
     case R_NET:
         if (addr == 0x4000 + FW_N_COMM_MODE + 1) { *out = 0; return 0; }
         it = find_itm(SYSI, NSYS, addr);
@@ -216,7 +289,7 @@ int fw_reg_read(const fw_dev_t *d, uint16_t addr, uint16_t *out)
 }
 
 /* ------------------------------------------------------------------ writes */
-typedef enum { W_UNDEF = 0, W_LEG, W_SEG, W_AXCMD, W_SYSCMD, W_UNLOCK, W_USERDO, W_NETAPPLY } wkind_t;
+typedef enum { W_UNDEF = 0, W_LEG, W_SEG, W_AXCMD, W_SYSCMD, W_UNLOCK, W_USERDO, W_NETAPPLY, W_SETUP, W_PT } wkind_t;
 typedef struct {
     wkind_t k;
     int axis;
@@ -245,7 +318,8 @@ static wt_t wclassify(const fw_dev_t *d, unsigned a)
         it = find_itm(SYSI, NSYS, a);
         if (it) {
             t.istart = it->off; t.iwords = it->words;
-            t.k = it->id == I_SYSCMD ? W_SYSCMD : it->id == I_UNLOCK ? W_UNLOCK : it->id == I_USERDO ? W_USERDO : W_UNDEF;
+            t.k = it->id == I_SYSCMD ? W_SYSCMD : it->id == I_UNLOCK ? W_UNLOCK : it->id == I_USERDO ? W_USERDO :
+                  it->id == I_SETUP ? W_SETUP : W_UNDEF;
         }
         return t;
     case R_NET:
@@ -254,6 +328,14 @@ static wt_t wclassify(const fw_dev_t *d, unsigned a)
         e = fw_seg_find(&FW_SEG_NET, l.off);
         if (e) { t.k = W_SEG; t.seg = &FW_SEG_NET; t.segid = 3; t.segoff = l.off; t.istart = 0x4000u + e->off; t.iwords = e->words; }
         return t;
+    case R_POINT: {
+        const unsigned w = l.off & 0xFu;
+        t.axis = l.axis;
+        if (w >= 7u) return t;                                     /* reserved word: not writable */
+        t.k = W_PT; t.segoff = (l.off >> 4) & 7u; t.segid = (int)w;
+        t.istart = (w == 1u || w == 3u) ? a - 1u : a; t.iwords = (w <= 3u) ? 2u : 1u;
+        return t;
+    }
     case R_AXIS:
         t.axis = l.axis;
         if (l.off >= 0x40 && l.off < 0x80) {
@@ -274,7 +356,8 @@ static wt_t wclassify(const fw_dev_t *d, unsigned a)
 static bool axis_cmd_supported(uint16_t c)
 {
     return c == FW_CMD_START_ABS || c == FW_CMD_START_REL || c == FW_CMD_STOP || c == FW_CMD_ALARM_RESET ||
-           c == FW_CMD_SERVO_ON || c == FW_CMD_SERVO_OFF || c == FW_CMD_SET_POSITION || c == FW_CMD_QUICK_STOP;
+           c == FW_CMD_SERVO_ON || c == FW_CMD_SERVO_OFF || c == FW_CMD_SET_POSITION || c == FW_CMD_QUICK_STOP ||
+           (c >= FW_CMD_START_ABS_UNIT && c <= FW_CMD_POINT_TEACH);
 }
 
 /* returns 0 or an exception code; commits atomically */
@@ -286,6 +369,7 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
     uint16_t axcmd[FW_MAX_AXES]; bool axcmd_v[FW_MAX_AXES] = {0};
     uint16_t syscmd = 0; bool syscmd_v = false;
     bool unlock_v = false, userdo_v = false, netapply_v = false; uint16_t userdo = 0, unlockval = 0;
+    uint8_t t_pt[FW_MAX_AXES] = {0};
 
     for (unsigned a = addr; a < addr + count;) {
         const wt_t t = wclassify(d, a);
@@ -318,8 +402,13 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
             axcmd[t.axis] = w0; axcmd_v[t.axis] = w0 != 0;
             break;
         case W_SYSCMD:
-            if (w0 != 0 && (w0 > FW_SYS_STOP_ALL)) return 3;
+            if (w0 != 0 && (w0 > FW_SYS_NET_RESET)) return 3;
             syscmd = w0; syscmd_v = w0 != 0;
+            break;
+        case W_SETUP: if (w0 > 1u) return 3; cand.setup_done = w0; break;
+        case W_PT:
+            memcpy(&cand.pt[t.axis][t.segoff][t.segid], &v[a - addr], t.iwords * sizeof(uint16_t));
+            t_pt[t.axis] = (uint8_t)(t_pt[t.axis] | (1u << t.segoff));
             break;
         case W_UNLOCK: if (w0 != FW_UNLOCK_KEY) return 3; unlock_v = true; unlockval = w0; break;
         case W_USERDO: if (w0 & ~3u) return 3; userdo = w0; userdo_v = true; break;
@@ -337,6 +426,9 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
             if (fw_op_validate(cand.op[a], cand.par[a], t_opx[a])) return 3;
         }
     }
+    for (unsigned a = 0; a < d->axis_count; ++a)
+        for (unsigned i = 0; i < FW_PT_N; ++i)
+            if ((t_pt[a] >> i) & 1u && !fw_point_validate(cand.pt[a][i])) return 3;
     if (t_sys && fw_sys_validate(cand.sys)) return 3;
     if (t_net && fw_net_validate(cand.net, d->model_rtu)) return 3;
     /* review M-05: network / comm-mode words only with the unlock key; a net-only change is NOT auto-saved (it is saved

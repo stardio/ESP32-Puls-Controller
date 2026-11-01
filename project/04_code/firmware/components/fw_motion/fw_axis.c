@@ -11,7 +11,7 @@ static uint16_t init_alarm(const fw_axis_t *a)
     const uint16_t own = a->idx == 0 ? FW_BOOT_PULSE_X : FW_BOOT_PULSE_Y;
     const uint16_t fault = a->idx == 0 ? FW_BOOT_FAULT_X : FW_BOOT_FAULT_Y;
     if (!(b & own) || !fw_hal_pulse_ready(a->idx)) return FW_AL_PE_HW;
-    if (!(b & fault)) return FW_AL_PE_HW;                      /* M-06: MCPWM fault path (D-070 path B) not bound: no operation */
+    if (!(b & fault)) return FW_AL_PE_FAULTPATH;                      /* M-06: MCPWM fault path (D-070 path B) not bound: no operation */
     if (!(b & FW_BOOT_CFG_OK)) return FW_AL_PARAM;
     if (!(b & FW_BOOT_NVS)) return FW_AL_NVM;
     if (!(b & FW_BOOT_WDT)) return FW_AL_PE_HW;
@@ -63,8 +63,10 @@ static void finalize(fw_axis_t *a, uint16_t cause, uint16_t leg_result, uint16_t
     fw_hal_pulse_end(a->idx);
     a->position = (int32_t)cur_signed_pos(a, n);
     a->mv = MV_IDLE;
+    a->test_active = false;
     a->last_hz = 0;
     t->pulses_done = n;
+    if (n > 0) t->loop_seen = (leg_result != 3);              /* PCNT counted the output pin; 3 = count mismatch */
     t->leg_result = leg_result;
     t->leg_fault = leg_fault;
     t->last_stop_cause = cause;
@@ -83,12 +85,10 @@ static uint8_t reject(fw_axis_t *a, uint8_t code, bool legacy_fault)
 }
 
 /* start a finite move. delta_forward: direction, pulses >= 1 */
-static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool relative_check_only)
+static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, uint32_t speed, uint16_t accel, uint16_t decel)
 {
-    (void)relative_check_only;
     fw_axis_tele_t *t = &TELE(a);
     const uint16_t *par = PAR(a);
-    const uint16_t *op = OP(a);
     if (!engine_allowed(a)) return reject(a, FW_RES_ALARM, true);
     /* STOP input active, or io not initialised / no STOP input: refuse at once (no side effect). A merely LATCHED STOP
      * with the input released is handled after all other checks (D-072, below). */
@@ -99,7 +99,6 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool rela
     if (par[FW_P_SVON_MODE] == 1 && !t->servo_manual) return reject(a, FW_RES_SERVO_OFF, true);
     if (pulses == 0) return reject(a, FW_RES_RANGE, true);
 
-    const uint32_t speed = fw_w32(op, FW_O_SPEED);
     const uint32_t start = fw_start_speed(fw_w32(par, FW_P_START_SPEED), speed);
     uint32_t ticks;
     if (!fw_ticks_for_freq(a->res_hz, start, FW_MAX_PERIOD_TICKS, &ticks) ||
@@ -110,7 +109,7 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool rela
      * long enough is released by it; otherwise 0x10 and the latch stays. A rejected command never releases the latch. */
     if (fw_hal_stop_latched(a->idx) && fw_hal_stop_release(a->idx) != 0) return reject(a, FW_RES_ESTOP, true);
 
-    fw_profile_calc(&a->prof, pulses, start, speed, op[FW_O_ACCEL], op[FW_O_DECEL]);
+    fw_profile_calc(&a->prof, pulses, start, speed, accel, decel);
     a->forward_positive = forward;
     a->target_pulses = pulses;
     a->user_cause = 0;
@@ -132,10 +131,9 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, bool rela
     return FW_RES_OK;
 }
 
-static uint8_t cmd_start(fw_axis_t *a, bool absolute)
+static uint8_t cmd_start_with(fw_axis_t *a, bool absolute, int32_t target, uint32_t speed, uint16_t accel, uint16_t decel)
 {
     fw_axis_tele_t *t = &TELE(a);
-    const int32_t target = (int32_t)fw_w32(OP(a), FW_O_TARGET);
     if (absolute) {
         if (!a->pos_valid && PAR(a)[FW_P_REQUIRE_HOME]) return reject(a, FW_RES_POS_INVALID, false);
         const int64_t delta = (int64_t)target - (int64_t)a->position;
@@ -146,18 +144,86 @@ static uint8_t cmd_start(fw_axis_t *a, bool absolute)
             return FW_RES_OK;
         }
         const uint64_t mag = delta < 0 ? (uint64_t)(-delta) : (uint64_t)delta;
-        return start_move(a, delta > 0, (uint32_t)mag, false);
+        return start_move(a, delta > 0, (uint32_t)mag, speed, accel, decel);
     }
     if (target == 0) return reject(a, FW_RES_RANGE, false);
     const uint32_t mag = target < 0 ? (uint32_t)(-(int64_t)target) : (uint32_t)target;
-    return start_move(a, target > 0, mag, false);
+    return start_move(a, target > 0, mag, speed, accel, decel);
+}
+
+static uint8_t cmd_start(fw_axis_t *a, bool absolute)
+{
+    const uint16_t *op = OP(a);
+    return cmd_start_with(a, absolute, (int32_t)fw_w32(op, FW_O_TARGET), fw_w32(op, FW_O_SPEED), op[FW_O_ACCEL], op[FW_O_DECEL]);
+}
+
+/* ---- 5.12 helpers: converted speeds follow the same limits as a stored speed (100 Hz .. max_speed, >= start_speed) ---- */
+static bool speed_ok(const fw_axis_t *a, uint32_t hz)
+{
+    const uint32_t st = fw_w32(PAR(a), FW_P_START_SPEED);
+    return hz >= FW_SPEED_MIN_HZ && hz <= fw_w32(PAR(a), FW_P_MAX_SPEED) && hz <= FW_SPEED_MAX_HZ && !(st && hz < st);
+}
+
+static uint8_t cmd_start_unit(fw_axis_t *a, bool absolute)
+{
+    const uint16_t *op = OP(a);
+    int32_t pulses; uint32_t hz;
+    if (PAR(a)[FW_P_UNIT_MODE] == FW_UM_PULSE) return reject(a, FW_RES_RANGE, false);
+    if (!fw_unit_to_pulses(PAR(a), (int32_t)fw_w32(op, FW_O_TARGET_UNIT), &pulses) ||
+        !fw_unit_speed_to_hz(PAR(a), fw_w32(op, FW_O_SPEED_UNIT), &hz) || !speed_ok(a, hz))
+        return reject(a, FW_RES_RANGE, false);                 /* overflow or speed over 1 MHz / max_speed: 0x17 */
+    return cmd_start_with(a, absolute, pulses, hz, op[FW_O_ACCEL], op[FW_O_DECEL]);
+}
+
+static uint8_t cmd_point_go(fw_axis_t *a)
+{
+    const uint16_t *pt = a->dev->cfg.pt[a->idx][OP(a)[FW_O_POINT_INDEX] & (FW_PT_N - 1)];
+    int32_t pulses; uint32_t hz;
+    if (pt[FW_PT_VALID] != 1) return reject(a, FW_RES_RANGE, false);
+    if (!fw_unit_to_pulses(PAR(a), (int32_t)fw_w32(pt, FW_PT_POS), &pulses) ||
+        !fw_unit_speed_to_hz(PAR(a), fw_w32(pt, FW_PT_SPEED), &hz) || !speed_ok(a, hz))
+        return reject(a, FW_RES_RANGE, false);
+    return cmd_start_with(a, true, pulses, hz, pt[FW_PT_ACCEL], pt[FW_PT_DECEL]);
+}
+
+static uint8_t cmd_point_teach(fw_axis_t *a)
+{
+    uint16_t *pt = a->dev->cfg.pt[a->idx][OP(a)[FW_O_POINT_INDEX] & (FW_PT_N - 1)];
+    int32_t pos_u; uint32_t sp_u;
+    if (a->mv != MV_IDLE) return reject(a, FW_RES_RUNNING, false);
+    if (!a->pos_valid) return reject(a, FW_RES_POS_INVALID, false);
+    if (!fw_pulses_to_unit(PAR(a), a->position, &pos_u) || !fw_hz_to_unit(PAR(a), fw_w32(OP(a), FW_O_SPEED), &sp_u) || sp_u < 1u)
+        return reject(a, FW_RES_RANGE, false);
+    fw_set32(pt, FW_PT_POS, (uint32_t)pos_u); fw_set32(pt, FW_PT_SPEED, sp_u);
+    pt[FW_PT_ACCEL] = OP(a)[FW_O_ACCEL]; pt[FW_PT_DECEL] = OP(a)[FW_O_DECEL]; pt[FW_PT_VALID] = 1;
+    if (a->dev->ops.cfg_changed) a->dev->ops.cfg_changed(a->dev->ops.ctx);
+    TELE(a).cmd_result = FW_RES_OK;
+    return FW_RES_OK;
+}
+
+/* TEST_POS / TEST_NEG (FR-032): a finite move of INT32_MAX pulses at test_rpm; the command must be rewritten within
+ * FW_TEST_KEEPALIVE_MS (checked in fw_axis_poll), otherwise it decelerates to a stop. The same command again = keepalive. */
+static uint8_t cmd_test(fw_axis_t *a, bool forward)
+{
+    uint32_t hz;
+    if (fw_hal_stop_input(a->idx) || (fw_hal_stop_blocking(a->idx) && !fw_hal_stop_latched(a->idx)) ) return reject(a, FW_RES_ESTOP, false);
+    if (a->test_active && a->mv == MV_RUN && a->test_forward == forward) {
+        a->test_last_ms = fw_hal_ms();
+        TELE(a).cmd_result = FW_RES_OK;
+        return FW_RES_OK;
+    }
+    if (!fw_test_hz(PAR(a), &hz) || !speed_ok(a, hz)) return reject(a, FW_RES_RANGE, false);
+    if (a->mv != MV_IDLE) return reject(a, FW_RES_RUNNING, false);
+    const uint8_t r = start_move(a, forward, (uint32_t)INT32_MAX, hz, OP(a)[FW_O_ACCEL], OP(a)[FW_O_DECEL]);
+    if (r == FW_RES_OK) { a->test_active = true; a->test_forward = forward; a->test_last_ms = fw_hal_ms(); }
+    return r;
 }
 
 uint8_t fw_axis_start_legacy(fw_axis_t *a)
 {
     const uint32_t pulses = fw_w32(a->dev->cfg.leg, 0);
     if (pulses > (uint32_t)INT32_MAX) return reject(a, FW_RES_RANGE, true);   /* > S32 limit of the axis area (spec 5.0.1) */
-    return start_move(a, (a->dev->cfg.leg[2] & 1u) != 0, pulses, false);
+    return start_move(a, (a->dev->cfg.leg[2] & 1u) != 0, pulses, fw_w32(OP(a), FW_O_SPEED), OP(a)[FW_O_ACCEL], OP(a)[FW_O_DECEL]);
 }
 
 uint8_t fw_axis_start_physical(fw_axis_t *a)
@@ -200,6 +266,12 @@ uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd)
     switch (cmd) {
     case FW_CMD_START_ABS: return cmd_start(a, true);
     case FW_CMD_START_REL: return cmd_start(a, false);
+    case FW_CMD_START_ABS_UNIT: return cmd_start_unit(a, true);
+    case FW_CMD_START_REL_UNIT: return cmd_start_unit(a, false);
+    case FW_CMD_TEST_POS: return cmd_test(a, true);
+    case FW_CMD_TEST_NEG: return cmd_test(a, false);
+    case FW_CMD_POINT_GO: return cmd_point_go(a);
+    case FW_CMD_POINT_TEACH: return cmd_point_teach(a);
     case FW_CMD_STOP:
         begin_decel(a, FW_SC_STOP_CMD);
         t->cmd_result = FW_RES_OK;
@@ -257,9 +329,12 @@ void fw_axis_poll(fw_axis_t *a)
                 }
                 t->cmd_speed = a->forward_positive ? (int32_t)a->last_hz : -(int32_t)a->last_hz;
                 t->pulses_done = n;
+                if (n > 0) t->loop_seen = true;                      /* wiring_status: loopback counter is rising */
             }
         }
     }
+    if (a->test_active && a->mv == MV_RUN && (uint32_t)(fw_hal_ms() - a->test_last_ms) > FW_TEST_KEEPALIVE_MS)
+        begin_decel(a, FW_SC_STOP_CMD);                            /* keepalive missed: decelerate to a stop */
     if (blocking && !a->prev_blocking && PAR(a)[FW_P_ESTOP_POS] == 0) a->pos_valid = false;
     a->prev_blocking = blocking;
 

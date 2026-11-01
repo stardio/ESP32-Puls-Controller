@@ -20,6 +20,7 @@ void fw_motion_net_words(uint16_t net[FW_NET_WORDS]);                 /* copy of
 void fw_motion_set_link(bool up);
 void fw_motion_set_clients(unsigned n);
 void fw_motion_set_mac(const uint8_t mac[6]);
+void fw_motion_note_rtu_rx(void);                                     /* a valid RTU frame arrived (wiring_status b9) */
 /* One request PDU from connection `conn` (any int; -1 for RTU). Locks, stamps time, processes. */
 size_t fw_motion_process_pdu(int32_t conn, const uint8_t *req, size_t len, uint8_t *resp);
 void fw_motion_conn_closed(int32_t conn);

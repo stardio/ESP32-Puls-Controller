@@ -25,6 +25,8 @@ typedef struct {
     bool      done_ok;                   /* last move completed normally (axis_status b2) */
     uint16_t  user_cause;                /* stop cause requested while running */
     bool      prev_blocking;
+    bool      test_active, test_forward;  /* TEST_POS/NEG hold-type run (FR-032) */
+    uint32_t  test_last_ms;
     uint16_t  sticky_alarm, init_alarm;  /* alarm_code shown = 0x0101 while the STOP blocks, else sticky_alarm */
 } fw_axis_t;
 

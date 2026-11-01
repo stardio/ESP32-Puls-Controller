@@ -196,3 +196,71 @@ D-059에 따라 RTU 모델의 출하 기본 통신 모드는 RTU다. 모델 4종
 1. 먼저 `unlock_key`(0x0102)=0x4D56을 별도 쓰기로 보내 10 s 안에 쓴다. 잠금 상태에서 값이 바뀌는 쓰기는 예외 03이고 아무것도 바뀌지 않는다(같은 값 재쓰기는 허용).
 2. 쓰기만으로는 NVS 저장이 요청되지 않는다(자동 저장 없음). `net_apply`(0x400F)=1(잠금 필요, 운전 중 거부 0x12) 또는 `SAVE`로 저장한다.
 3. 적용은 재부팅 후(`REBOOT`, 잠금 필요).
+
+## 13. 초보자 사용성 기능 FR-029~FR-035 (2026-11-01, D-074~D-076, interface-spec §5.12)
+
+### 13.1 구현 요약
+| FR | 구현 위치 | 내용 |
+|---|---|---|
+| 029 | `fw_core/fw_unit.c/.h`(순수 함수), `fw_params.c`(+0x140~, op +0x4A~), `fw_axis.c`(`cmd_start_unit`), `fw_regmap.c`(position_unit) | 정수 연산만(riscv32에는 `__int128`이 없어 64×64→128 곱셈과 128/64 나눗셈을 직접 구현). 반올림 후 S32/U32 초과·0 나눗셈 검사. 명령 13/14 |
+| 030 | `fw_regmap.c` | `setup_done`(0x0130, 저장 이미지), `max_rpm_calc`(축 +0x032) |
+| 031 | `fw_regmap.c::fw_wiring_status` | 기존 `di_raw`, `do_state`, `link`, 축별 `loop_seen`(PCNT 계수, `fw_axis.c`), RTU 마지막 유효 프레임(`fw_dev_note_rtu_rx`, `fw_mb_rtu.c`가 호출) 사용 |
+| 032 | `fw_axis.c::cmd_test` + `fw_axis_poll` | 유한 이동(INT32_MAX 펄스)을 test_rpm 속도로 시작, 같은 명령 재쓰기 = keepalive, 500 ms 초과 시 `begin_decel` |
+| 033 | `fw_regmap.c::fw_alarm_hint` | 우선순위는 spec §5.12 구현 확정 표 |
+| 034 | `fw_params.h/.c`(cfg.pt[축][8][8워드]), `fw_regmap.c`(0x6000~), `fw_axis.c` | 포인트 저장·검증·POINT_GO·POINT_TEACH |
+| 035 | `fw_regmap.c::fw_sys_reset_cmd`(순수), `fw_params.c`(`fw_cfg_net_reset`, `fw_nrhold_*`), `fw_motion.c` | sys_command 7·8, 부팅 10 s 보유 감지 후 net 복원·저장·재부팅 |
+
+### 13.2 레지스터 변경 여부
+**주소 충돌 없음, 이동 없음.** §5.12 배정을 그대로 사용했다. 확인한 점: 축 +0x140~0x147은 par 이미지(0x12C~0x13F 미사용)와 겹치지 않고, +0x04A~0x04E는 op 이미지(0x040~0x04F)의 빈 칸, +0x030/0x032는 축 데이터 빈 칸, 0x0033/0x0034/0x0130은 시스템 블록 빈 칸(0x0130은 0x0120 user_do와 별도 항목), 0x6000~0x60FF는 새 영역. 배정표에 번호가 없던 sys_command 값만 7 = FACTORY_RESET, 8 = NET_RESET으로 정했다. 구현 확정 사항을 interface-spec §5.12 끝에 추가했다(주소 표는 수정하지 않음).
+
+### 13.3 설계와 다른 점 / [권고] 기본값
+1. **저장 이미지 버전 1 → 2.** setup_done과 포인트가 이미지에 들어가 구조체 크기가 바뀐다. 이전 이미지는 거부되어 기본값으로 시작(개발 단계라 이전 이미지가 없다고 [가정]).
+2. unit_mode 0(펄스)에서 변환은 항등, START_*_UNIT는 0x17 [권고]: 펄스 모드 사용자가 단위 명령을 쓸 이유가 없고 오해를 막는다.
+3. 단위 속도가 `speed` 파라미터와 같은 한계(100 Hz 이상, max_speed 이하)를 따르게 했다. 설계서는 "1 MHz 또는 max_speed 초과 시 0x17"만 적었고 하한은 저장 속도 범위와 맞춘 것 [권고].
+4. wiring_status b1을 "START 눌리지 않음"으로 해석했다(설계서 문구 "START 대기"). 눌림 확인용 비트가 필요하면 설계 변경 사항이다(이슈 1).
+5. b2는 "마지막 이동에서 PCNT가 센 펄스가 있고 계수 불일치가 없음"이다. 이동 전에는 0이다. 실제 펄스 핀 단선은 이 방식으로 이동하기 전에는 알 수 없다(이슈 2).
+6. 하드웨어 네트워크 초기화의 "부팅 직후"를 "`fw_motion_start` 끝의 첫 샘플부터 끊김 없이 10 s"로 구현했다. START 입력 디바운스 없이 `di_raw` 원시값을 쓴다.
+7. TEST 이동량은 INT32_MAX 펄스로 한정했다(약 2^31 펄스). 최고 1 MHz에서도 35분 이상이라 실제로 끝나지 않는다.
+8. 이 구현에서 `target_unit`/`speed_unit`/`point_index`는 op 이미지라 저장 대상이 된다(기존 target/speed와 같은 취급).
+
+### 13.4 시험 결과 (그대로, 2026-11-01)
+기존 시험의 기대값 3곳은 §5.12가 이전의 "미정의" 값을 정의했기 때문에 바꿨다(삭제 아님): `test_regmap.c` sys_command 7 → 9, 주소 0x6000 → 0x6100, axis_command 13 → 19의 "거부" 확인.
+
+`make -C project/04_code/tests/firmware run`:
+```
+test_core.c: 8689 checks, 0 failures
+test_regmap.c: 459 checks, 0 failures
+test_axis.c: 259 checks, 0 failures
+test_beginner.c: 148838 checks, 0 failures   (신규 12개 시험)
+```
+`make pytest`(test_cfg_syntax.py, 전체 C 파일 gcc -fsyntax-only 포함, 새 파일·`fw_motion.c`·`fw_mb_rtu.c` 변경분 포함): **32 passed**.
+
+개발 중 실패한 것(수정 후 재실행): 시험 쪽 오류만 — max_speed를 jog_max보다 낮게 쓰는 교차 규칙 위반 3건(시험 순서 수정), POINT_GO 가감속 검증용 속도가 시작 속도 이하라 램프가 없는 값이었음(8000으로 변경). 펌웨어 쪽 실패는 없었다.
+
+| 시험 (test_beginner.c) | 다룬 것 |
+|---|---|
+| unit_basic_and_rounding | mm/°/기어비/펄스 모드 변환, 반올림(+/- 대칭), 속도 변환 |
+| unit_boundaries_and_overflow | S32 경계 ±1, 최악 파라미터(1e7 ppr × 1000 기어) 128비트 중간값, U32 속도 초과, 0 나눗셈 방지, 포화 |
+| unit_roundtrip | 10개 파라미터 조합 × 4,857 값: 단위→펄스 오차 ≤ 0.5 펄스(double 대조), 펄스→단위→펄스 ≤ 1 펄스(단위가 펄스보다 잘 때), 단위→펄스→단위 ≤ 1 단위(펄스가 단위보다 잘 때). 최대 오차 0 |
+| unit_commands | Modbus 경로 REL/ABS_UNIT, position_unit, 속도 초과·하한·1 MHz 초과·목표 오버플로 0x17, 펄스 모드 거부, 파라미터 범위 예외 03, 기본값, 축 독립 |
+| setup_done_and_max_rpm | 0/1, 저장 알림, 이미지 검증, max_rpm 계산·65535 포화·0 |
+| wiring_status | 비트별(b0~b3, 두 축, b8, b9 시간 경계 3000/3001 ms, b15 무효, 1축), 읽기 전용 |
+| alarm_hint | 우선순위 조합, 실제 STOP 입력 연동 |
+| test_hold | 속도, 400 ms keepalive 유지, 500 ms 경계(유지)/501 ms(감속 정지), 정지 중 keepalive 불가(0x13), 반대 방향 0x13, STOP 명령, STOP 활성 중 0x10(keepalive 포함), 운전 중 STOP 입력, 속도 범위 0x17 |
+| points | 쓰기·읽기, 검증(원자적), 예약 워드 02, GO(가감속 값 확인), 빈 점 0x17, 속도 초과 0x17, TEACH(값·거부), 저장 이미지 포함·검증, Y축·1축 모델 |
+| resets | 잠금 0x11, 잠금 만료, 운전 중 0x12, NET_RESET 범위(다른 설정 유지), 잠금 소모, FACTORY_RESET 전체, 모델별 기본 모드 |
+| boot_hold | 10 s 경계(9999 ms 미발동, 10000 ms 발동, 1회), 중간 해제 시 영구 취소, 한 입력만, ms 카운터 랩, net 복원 범위 |
+| regression_defaults | 새 레지스터 미사용 시 기존 기본값·이미지 검증 유지 |
+
+**이 시험이 증명하지 않는 것:** `fw_motion.c`의 실제 부팅 시퀀스·저장·재부팅(IDF 의존, `-fsyntax-only`만 통과), 실제 START 입력 극성·디바운스, 장시간 TEST 이동의 PCNT 오버플로(HIL), 실장비.
+
+### 13.5 이슈 제기
+1. (설계) wiring_status b1의 의미: "START 대기"를 눌림 없음으로 구현. HMI가 "START를 눌러 보세요"를 확인하려면 눌림 래치 비트가 필요하다. 설계 변경이므로 메인 세션 판단.
+2. (설계) b2(펄스 루프백)는 첫 이동 전에는 0이다. 마법사 점검 순서에 "TEST_POS 1회" 단계가 필요하다.
+3. (HIL) INT32_MAX 펄스 TEST 이동에서 PCNT 누적(`fw_total_count`)과 `fw_profile_calc` float 정밀도가 2^31 펄스 규모에서 유지되는지 확인되지 않았다. 호스트 시험은 감속 정지까지(수천 펄스)만 본다.
+4. (설계) FACTORY_RESET은 `par`의 `pulse_res`도 기본값으로 되돌리나, 분해능은 부팅 시에만 적용되므로 REBOOT가 필요하다. HMI 안내 문구에 재부팅을 포함할 것.
+
+### 13.6 PC 도구 정합 (메인 세션 전달, 2026-11-01)
+- sys_command: **FACTORY_RESET = 7, NET_RESET = 8** (펌웨어 값과 PC 도구 값이 같다. 변경 없음).
+- 포인트 테이블 0x6000~은 v1에서 "단독 운전 순서(FR-013)" 영역을 대체한다(같은 영역을 포인트 테이블로 사용, 순서 운전 기능은 v1 펌웨어에 없다).
+- 알람 **0x0603 E-PE-FAULTPATH** 추가(`FW_AL_PE_FAULTPATH`): 축의 MCPWM fault 경로가 묶이지 않았을 때(`boot_status` b6/b7 = 0) 이전의 0x0602 대신 보고한다. 운전 금지 동작은 그대로. alarm_hint 우선순위는 0x0602와 같은 단계(0x0101 > 0x0602 = 0x0603 > 0x0701 …). 기존 시험 `test_axis.c` 343행의 기대 코드를 0x0602 → 0x0603으로 바꿨다(삭제 아님). 펄스 엔진 미생성·WDT 미구독은 0x0602 유지.

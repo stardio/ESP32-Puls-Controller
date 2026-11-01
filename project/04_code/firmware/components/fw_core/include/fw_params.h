@@ -10,10 +10,12 @@
 #define FW_MAX_AXES 2
 
 /* ---- register word counts of the persisted segments ---- */
-#define FW_PAR_WORDS 0x2C          /* B+0x100..0x12B */
+#define FW_PAR_WORDS 0x48          /* B+0x100..0x147 (0x12C..0x13F unused; 0x140..0x147 = 5.12 unit/test parameters) */
 #define FW_OP_WORDS  0x10          /* B+0x040..0x04F (registers 0x042..0x049 defined) */
 #define FW_SYS_WORDS 5             /* 0x0110..0x0114 */
 #define FW_NET_WORDS 0x10          /* 0x4000..0x400F */
+#define FW_PT_N      8             /* points per axis (5.12) */
+#define FW_PT_WORDS  8             /* 0 pos(2) 2 speed(2) 4 accel_ms 5 decel_ms 6 valid 7 reserved */
 #define FW_LEG_WORDS 4             /* legacy_move_pulses (2 words), flags, spare */
 
 /* entry flags */
@@ -34,10 +36,14 @@ enum {
     FW_P_SWLIM_NEG = 0x1D, FW_P_INPUT_LOGIC = 0x1F, FW_P_INPUT_FILTER = 0x20, FW_P_LIMIT_STOP = 0x21,
     FW_P_LIMIT_DECEL = 0x22, FW_P_ALARM_STOP = 0x23, FW_P_INP_WAIT = 0x24, FW_P_INP_TIMEOUT = 0x25,
     FW_P_SVON_AT_BOOT = 0x26, FW_P_ESTOP_POS = 0x27, FW_P_REQUIRE_HOME = 0x28, FW_P_SVON_MODE = 0x29,
-    FW_P_PULSE_RES = 0x2A
+    FW_P_PULSE_RES = 0x2A,
+    /* interface-spec 5.12 (B+0x140..) */
+    FW_P_UNIT_MODE = 0x40, FW_P_PULSES_PER_REV = 0x41, FW_P_LEAD_UM = 0x43, FW_P_GEAR_NUM = 0x45, FW_P_GEAR_DEN = 0x46,
+    FW_P_TEST_RPM = 0x47
 };
 /* op segment offsets (register = B + 0x040 + offset) */
-enum { FW_O_COMMAND = 0x00, FW_O_TARGET = 0x02, FW_O_SPEED = 0x04, FW_O_ACCEL = 0x06, FW_O_DECEL = 0x07, FW_O_JOGOVR = 0x08 };
+enum { FW_O_COMMAND = 0x00, FW_O_TARGET = 0x02, FW_O_SPEED = 0x04, FW_O_ACCEL = 0x06, FW_O_DECEL = 0x07, FW_O_JOGOVR = 0x08,
+       FW_O_TARGET_UNIT = 0x0A, FW_O_SPEED_UNIT = 0x0C, FW_O_POINT_INDEX = 0x0E /* interface-spec 5.12 */ };
 /* sys segment offsets (register = 0x0110 + offset) */
 enum { FW_S_COMMLOSS_EN = 0, FW_S_COMMLOSS_MS, FW_S_COMMLOSS_SCOPE, FW_S_AUTO_SAVE, FW_S_MAX_CLIENTS };
 /* net segment offsets (register = 0x4000 + offset) */
@@ -46,7 +52,7 @@ enum { FW_N_IP = 0, FW_N_MASK = 2, FW_N_GW = 4, FW_N_UNIT = 6, FW_N_MAC = 7 /*3 
        FW_N_RTU_PARITY = 0x0B, FW_N_RTU_ADDR = 0x0C, FW_N_COMM_MODE = 0x0E };
 
 /* ---- persisted image (RAM copy = live register values) ---- */
-#define FW_CFG_VERSION 1u
+#define FW_CFG_VERSION 2u          /* 2: + setup_done, point table (5.12); an old image is refused and defaults are loaded */
 typedef struct {
     uint32_t version;
     uint16_t leg[FW_LEG_WORDS];                  /* [0..1] legacy_move_pulses (low word first), [2] b0 = direction forward */
@@ -54,6 +60,8 @@ typedef struct {
     uint16_t net[FW_NET_WORDS];
     uint16_t op[FW_MAX_AXES][FW_OP_WORDS];
     uint16_t par[FW_MAX_AXES][FW_PAR_WORDS];
+    uint16_t setup_done, setup_pad;               /* 0x0130 (5.12) */
+    uint16_t pt[FW_MAX_AXES][FW_PT_N][FW_PT_WORDS];
     uint32_t crc;                                /* fw_crc32 over everything before this field */
 } fw_cfg_t;
 
@@ -76,6 +84,19 @@ unsigned fw_op_validate(const uint16_t *op, const uint16_t *par, bool via_axis_a
 unsigned fw_sys_validate(const uint16_t *sys);
 unsigned fw_net_validate(const uint16_t *net, bool model_rtu);
 int64_t  fw_ent_value(const fw_ent_t *e, const uint16_t *w);
+
+/* point table entry validation (5.12): valid 0/1; a valid point needs speed_unit >= 1 and accel/decel 10..60000 ms */
+enum { FW_PT_POS = 0, FW_PT_SPEED = 2, FW_PT_ACCEL = 4, FW_PT_DECEL = 5, FW_PT_VALID = 6 };
+bool fw_point_validate(const uint16_t *pt);
+void fw_cfg_net_reset(fw_cfg_t *c, bool model_rtu);   /* network words := factory values (D-059 mode default for the model) */
+
+/* ---- hardware network reset (D-076): X START + X STOP both active from the first sample after boot, held 10 s ---- */
+#define FW_NETRESET_HOLD_MS 10000u
+typedef struct { uint8_t state; uint32_t since_ms; } fw_nrhold_t;     /* state 0 new, 1 holding, 2 cancelled, 3 fired */
+void fw_nrhold_init(fw_nrhold_t *h);
+/* call periodically; the first call is the boot sample. Returns true exactly once, when the hold reached 10 s. Any sample
+ * with one of the inputs inactive cancels for good (the hold must start at boot and be continuous). */
+bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, uint32_t now_ms);
 
 /* ---- communication mode (D-056, D-059) ---- */
 enum { FW_MODE_TCP = 0, FW_MODE_RTU = 1 };

@@ -26,6 +26,10 @@ static const fw_ent_t PAR[] = {
     U16(FW_P_INP_TIMEOUT, 0, 60000, 3000),   U16(FW_P_SVON_AT_BOOT, 0, 1, 0),
     U16(FW_P_ESTOP_POS, 0, 0, 0),            U16(FW_P_REQUIRE_HOME, 0, 1, 1),
     U16(FW_P_SVON_MODE, 0, 1, 0),            U32(FW_P_PULSE_RES, 2000000, 40000000, 2000000),
+    /* interface-spec 5.12 */
+    U16(FW_P_UNIT_MODE, 0, 2, 0),            U32(FW_P_PULSES_PER_REV, 1, 10000000, 10000),
+    U32(FW_P_LEAD_UM, 1, 10000000, 10000),   U16(FW_P_GEAR_NUM, 1, 1000, 1),
+    U16(FW_P_GEAR_DEN, 1, 1000, 1),          U16(FW_P_TEST_RPM, 1, 300, 60),
 };
 /* interface-spec 5.5 (op registers are stored so that the legacy window and the axis area share them) */
 static const fw_ent_t OP[] = {
@@ -33,6 +37,8 @@ static const fw_ent_t OP[] = {
     U32(FW_O_SPEED, FW_SPEED_MIN_HZ, FW_SPEED_MAX_HZ, 10000),
     U16(FW_O_ACCEL, 10, 60000, 400), U16(FW_O_DECEL, 10, 60000, 400),
     U32(FW_O_JOGOVR, 0, FW_SPEED_MAX_HZ, 0),
+    S32(FW_O_TARGET_UNIT, INT32_MIN, INT32_MAX, 0), U32(FW_O_SPEED_UNIT, 0, UINT32_MAX, 0),
+    U16(FW_O_POINT_INDEX, 0, FW_PT_N - 1, 0),
 };
 /* interface-spec 5.3 */
 static const fw_ent_t SYS[] = {
@@ -172,6 +178,37 @@ void fw_cfg_defaults_model(fw_cfg_t *c, bool model_rtu)
     if (model_rtu) { c->net[FW_N_COMM_MODE] = FW_MODE_RTU; fw_cfg_seal(c); }
 }
 
+void fw_cfg_net_reset(fw_cfg_t *c, bool model_rtu)
+{
+    fw_cfg_t def;
+    fw_cfg_defaults_model(&def, model_rtu);
+    memcpy(c->net, def.net, sizeof(c->net));
+}
+
+bool fw_point_validate(const uint16_t *pt)
+{
+    if (pt[FW_PT_VALID] > 1u || pt[7] != 0) return false;
+    if (pt[FW_PT_VALID] == 0) return true;
+    return fw_w32(pt, FW_PT_SPEED) >= 1u && pt[FW_PT_ACCEL] >= 10u && pt[FW_PT_ACCEL] <= 60000u &&
+           pt[FW_PT_DECEL] >= 10u && pt[FW_PT_DECEL] <= 60000u;
+}
+
+void fw_nrhold_init(fw_nrhold_t *h) { h->state = 0; h->since_ms = 0; }
+bool fw_nrhold_update(fw_nrhold_t *h, bool x_start_active, bool x_stop_active, uint32_t now_ms)
+{
+    const bool both = x_start_active && x_stop_active;
+    switch (h->state) {
+    case 0:
+        if (both) { h->state = 1; h->since_ms = now_ms; } else h->state = 2;
+        return false;
+    case 1:
+        if (!both) { h->state = 2; return false; }
+        if ((uint32_t)(now_ms - h->since_ms) >= FW_NETRESET_HOLD_MS) { h->state = 3; return true; }
+        return false;
+    default: return false;
+    }
+}
+
 void fw_cfg_seal(fw_cfg_t *c)
 {
     c->version = FW_CFG_VERSION;
@@ -183,6 +220,9 @@ fw_cfg_check_t fw_cfg_verify(const fw_cfg_t *c, size_t stored_size)
     if (stored_size != sizeof(*c)) return FW_CFG_BAD_SIZE;
     if (c->version != FW_CFG_VERSION) return FW_CFG_BAD_VERSION;
     if (c->crc != fw_crc32(c, offsetof(fw_cfg_t, crc))) return FW_CFG_BAD_CRC;
+    if (c->setup_done > 1u) return FW_CFG_BAD_RANGE;
+    for (unsigned a = 0; a < FW_MAX_AXES; ++a)
+        for (unsigned i = 0; i < FW_PT_N; ++i) if (!fw_point_validate(c->pt[a][i])) return FW_CFG_BAD_RANGE;
     if (fw_w32(c->leg, 0) < 1u || c->leg[2] > 1u) return FW_CFG_BAD_RANGE;
     if (fw_sys_validate(c->sys)) return FW_CFG_BAD_RANGE;
     /* the stored mode is checked against the hardware at boot (fw_mode_effective), not here */

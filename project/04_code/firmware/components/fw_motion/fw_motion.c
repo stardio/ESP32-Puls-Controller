@@ -20,6 +20,7 @@ static volatile uint8_t s_start_pending;
 static bool s_saving, s_reboot_req, s_reboot_commit, s_cl_tripped;   /* s_saving / s_reboot_commit: set under the lock, no START */
 static uint32_t s_reboot_at_ms;
 static uint32_t s_hb_ms;
+static fw_nrhold_t s_nrhold;                     /* D-076: X START + STOP held 10 s from boot */
 
 void fw_motion_lock(void) { xSemaphoreTake(s_lock, portMAX_DELAY); }
 void fw_motion_unlock(void) { xSemaphoreGive(s_lock); }
@@ -31,6 +32,7 @@ void fw_motion_net_words(uint16_t net[FW_NET_WORDS])
 }
 void fw_motion_set_link(bool up) { fw_motion_lock(); s_dev.link = up; fw_motion_unlock(); }
 void fw_motion_set_clients(unsigned n) { fw_motion_lock(); s_dev.tcp_clients = (uint16_t)n; fw_motion_unlock(); }
+void fw_motion_note_rtu_rx(void) { fw_motion_lock(); s_dev.now_ms = fw_hal_ms(); fw_dev_note_rtu_rx(&s_dev); fw_motion_unlock(); }
 void fw_motion_set_mac(const uint8_t mac[6]) { fw_motion_lock(); memcpy(s_dev.mac, mac, 6); fw_motion_unlock(); }
 
 /* review M-03: from the moment motion_task decides to save / reboot (under the lock) no start is accepted */
@@ -89,6 +91,12 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
         if (any_running()) return FW_SRES_AXIS_RUNNING;
         fw_save_request(&s_save);
         return FW_SRES_RUNNING_CMD;
+    case FW_SYS_FACTORY_RESET:
+    case FW_SYS_NET_RESET: {
+        const uint16_t r = fw_sys_reset_cmd(&s_dev, cmd, any_running());     /* FR-035: lock + no running axis, logic in fw_core */
+        if (r == FW_SRES_RUNNING_CMD) { fw_save_note_write(&s_save, fw_hal_ms()); fw_save_request(&s_save); }
+        return r;
+    }
     case FW_SYS_LOAD_DEFAULT:
         if (locked) return FW_SRES_LOCKED;
         if (any_running()) return FW_SRES_AXIS_RUNNING;
@@ -211,6 +219,13 @@ static void motion_task(void *arg)
             s_cl_tripped = any;
         }
         refresh_system(now);
+        if (fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, now)) {
+            ESP_LOGW(TAG, "boot hold START+STOP 10 s: network settings back to factory values, rebooting");
+            fw_cfg_net_reset(&s_dev.cfg, s_dev.model_rtu);
+            fw_save_note_write(&s_save, now);                         /* dirty: the reboot path saves it first */
+            fw_save_request(&s_save);
+            s_reboot_req = true; s_reboot_at_ms = now;
+        }
         if (fw_save_due(&s_save, now, sys[FW_S_AUTO_SAVE] != 0, running)) { save_now = true; s_saving = true; }
         const bool do_reboot = s_reboot_req && (int32_t)(now - s_reboot_at_ms) >= 0 && !running;
         if (do_reboot) s_reboot_commit = true;                         /* decided under the lock: no START from here on */
@@ -249,6 +264,7 @@ int fw_motion_start(const fw_motion_cfg_t *c)
     s_dev.fw_version = c->fw_version;
     s_dev.ops = (fw_dev_ops_t){op_axis_cmd, op_legacy_start, op_legacy_reset, op_sys_cmd, op_user_do, op_cfg_changed, NULL};
     fw_commloss_init(&s_cl, fw_hal_ms());
+    fw_nrhold_init(&s_nrhold);
     s_hb_ms = fw_hal_ms();
 
     /* reset cause (T-15) */
@@ -308,6 +324,7 @@ int fw_motion_start(const fw_motion_cfg_t *c)
     if (allowed == 0) for (unsigned a = 0; a < c->axis_count; ++a) fw_axis_servo_boot(&s_ax[a]);
     for (unsigned a = 0; a < c->axis_count; ++a) fw_axis_poll(&s_ax[a]);
     refresh_system(fw_hal_ms());
+    (void)fw_nrhold_update(&s_nrhold, (s_dev.di_raw & 1u) != 0, (s_dev.di_raw & 2u) != 0, fw_hal_ms());   /* boot sample (D-076) */
     ESP_LOGI(TAG, "boot_status 0x%04x, pulses %s", (unsigned)s_dev.boot_status, allowed == 0 ? "ALLOWED" : "PROHIBITED");
 
     if (xTaskCreate(motion_task, "fw_motion", 4096, NULL, 10, NULL) != pdPASS) {
