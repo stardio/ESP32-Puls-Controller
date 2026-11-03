@@ -50,3 +50,29 @@ Linux는 설치 후 한 번 로그아웃·로그인해야 시리얼 포트(dialo
 - `build_all` 출력의 OK/FAIL 6줄
 - FAIL이 있으면 `project/04_code/tools/build_all.log` 파일 전체(또는 push). 오류를 보고 코드를 고친다.
 - 빌드가 모두 OK면 `test-fw/RUN_ON_PC.md` 순서로 보드 실측을 진행한다.
+
+## 클라우드 개발 환경을 로컬 PC로 옮기기 (2026-11-03)
+
+### 무엇이 어디에 있나
+| 항목 | 위치 | 옮기는 방법 |
+|---|---|---|
+| 문서·결정·현황(decisions, status, SRS, 설계, 마케팅) | 저장소 `project/` | `git clone` |
+| 에이전트 11개·슬래시 명령 9개·공통 규칙 | 저장소 `.claude/`, `CLAUDE.md`, `templates/` | `git clone` (로컬 Claude Code가 자동 인식) |
+| 펌웨어·시험 펌웨어·PC 도구·시험 코드 | 저장소 `project/04_code/` | `git clone` |
+| 회로도 PDF, 구매 단가 발췌 | 저장소 `project/03_design/reference/` | `git clone` |
+| 대화 기록 | 클라우드 세션 | 옮기지 않아도 됨. 필요한 내용은 decisions·status에 모두 기록됨 |
+| 미커밋 원본(거래명세서·드라이브 매뉴얼 PDF) | 사용자 보관본 | 의도적으로 저장소 밖에 둠 |
+
+### 순서 (Windows 기준)
+1. 저장소 받기: `git clone https://github.com/stardio/ESP32-Puls-Controller.git C:\work\ESP32-Puls-Controller`
+2. ESP-IDF 설치·빌드 점검: 위 「Windows 10/11」 절
+3. Python 도구: `python -m pip install -r project\04_code\requirements-dev.txt`
+4. 호스트 C 시험(gcc·make 필요, 선택): WSL2 Ubuntu에서 `sudo apt install build-essential python3-pytest python3-yaml` 후
+   `make -C project/04_code/tests/firmware` / `make -C project/04_code/tests/test-fw`
+5. Claude Code 설치 후 저장소 폴더에서 `claude` 실행. 첫 요청 예: "status.md와 decisions.md를 읽고 현재 상태를 이어받아 SETUP_ESP_IDF.md 빌드 점검부터 진행해줘"
+
+### 로컬로 옮기면 달라지는 점
+- 네트워크 차단이 없어 제조사 매뉴얼(LS·미쓰비시) 원문을 직접 조회할 수 있다(I-012·I-045 해소 가능).
+- 보드 플래시·시리얼 로그·빌드 오류 수정을 Claude가 직접 할 수 있다.
+- 명령 실행 권한은 로컬 PC 계정 권한이다. 승인 프롬프트를 확인하고 허용한다.
+- 클라우드 세션과 로컬 세션을 동시에 쓰면 같은 파일을 따로 고칠 수 있다. 한쪽에서 작업 전 `git pull`, 끝나면 commit·push를 지킨다.

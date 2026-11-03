@@ -1,0 +1,4 @@
+# Host-side Python deps (svtool, test-fw host tool, pytest suites)
+pytest>=8
+pyyaml>=6
+pyserial>=3.5
