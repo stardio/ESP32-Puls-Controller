@@ -143,4 +143,7 @@ menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
         help
           Only to be turned on if HIL check M-05 (first cycle after a start) shows that the TEZ update does not apply the
           start period.
+    config FW_DIAG_STACK_REPORT
+        bool "DIAGNOSTIC: log task stack high-water marks (sdkconfig.diag only, not for products)"
+        default n
 endmenu

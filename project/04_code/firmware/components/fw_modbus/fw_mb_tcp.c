@@ -108,7 +108,8 @@ static void server_task(void *argument)
             if (!ca) { close(cfd); continue; }
             ca->fd = cfd; ca->conn = ++s_next_conn;
             __atomic_add_fetch(&s_clients, 1, __ATOMIC_SEQ_CST);                           /* count before the task exists (m-08) */
-            if (xTaskCreate(client_task, "fw_client", 4096, ca, 6, NULL) != pdPASS) {
+            /* 8192: 4096 left only 132 bytes unused in normal Modbus traffic (diag build, I-049 / G2 condition C1) */
+            if (xTaskCreate(client_task, "fw_client", 8192, ca, 6, NULL) != pdPASS) {
                 fw_motion_set_clients(__atomic_sub_fetch(&s_clients, 1, __ATOMIC_SEQ_CST));
                 close(cfd); free(ca);
             }

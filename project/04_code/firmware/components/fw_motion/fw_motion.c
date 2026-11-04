@@ -20,6 +20,7 @@ static fw_save_t s_save;
 static fw_commloss_t s_cl;
 static volatile uint8_t s_start_pending;
 static volatile uint8_t s_sync_pending;          /* D-088: b0 simultaneous START, b1 simultaneous STOP */
+static bool s_ip_start_req;                      /* D-089/I-049: INTERP_START accepted, planned by motion_task (under the lock) */
 static bool s_saving, s_reboot_req, s_reboot_commit, s_cl_tripped;   /* s_saving / s_reboot_commit: set under the lock, no START */
 static uint32_t s_reboot_at_ms;
 static uint32_t s_hb_ms;
@@ -112,7 +113,7 @@ static uint16_t ip_start(void)
     if (vx > axis_max_hz(0) || vy > axis_max_hz(1)) return ip_refuse(FW_IP_E_RANGE);   /* feed too fast for an axis */
     s_ip.base[0] = base[0]; s_ip.base[1] = base[1];
     s_ip.fin[0] = (int32_t)(base[0] + dx); s_ip.fin[1] = (int32_t)(base[1] + dy);
-    s_ip.t0_ms = fw_hal_ms();
+    s_ip.t0_ms = s_dev.now_ms;                       /* the pass time ip_tick uses as "now" (a later read could be ahead) */
     s_ip.active = true;
     s_ip.commloss = false;
     for (unsigned a = 0; a < 2; ++a) fw_axis_stream_session(&s_ax[a], true, 0, s_ip.fin[a]);
@@ -125,7 +126,8 @@ static void ip_stop(bool quick)
 {
     if (!s_ip.active) return;
     if (quick) { ip_finish(FW_IPS_STOPPED, FW_IP_OK, FW_SC_QUICK); return; }
-    fw_ip_stop(&s_ip.p, (fw_hal_ms() - s_ip.t0_ms) / 1000.0);
+    const int32_t el = (int32_t)(fw_hal_ms() - s_ip.t0_ms);
+    fw_ip_stop(&s_ip.p, (el > 0 ? el : 0) / 1000.0);
     double x, y;
     fw_ip_xy(&s_ip.p, fw_ip_end_s(&s_ip.p), &x, &y);
     s_ip.fin[0] = s_ip.base[0] + (int32_t)lround(x);
@@ -144,7 +146,9 @@ static void ip_tick(uint32_t now)
             return;
         }
     }
-    const double t = (now - s_ip.t0_ms) / 1000.0, dt = PERIOD_MS / 1000.0;
+    const int32_t el = (int32_t)(now - s_ip.t0_ms);  /* signed: never a huge unsigned value if t0 is ahead */
+    const uint32_t elapsed = el > 0 ? (uint32_t)el : 0u;
+    const double t = elapsed / 1000.0, dt = PERIOD_MS / 1000.0;
     const bool ended = t >= s_ip.p.T;
     double x = 0, y = 0, x2 = 0, y2 = 0;
     if (!ended) {
@@ -177,7 +181,7 @@ static void ip_tick(uint32_t now)
     if (ended && all_there)
         ip_finish(s_dev.ip_state == FW_IPS_STOPPING ? FW_IPS_STOPPED : FW_IPS_DONE, FW_IP_OK,
                   s_dev.ip_state == FW_IPS_STOPPING ? FW_SC_STOP_CMD : FW_SC_DONE);
-    else if (ended && now - s_ip.t0_ms > (uint32_t)(s_ip.p.T * 1000.0) + IP_SETTLE_MS)
+    else if (ended && elapsed > (uint32_t)(s_ip.p.T * 1000.0) + IP_SETTLE_MS)
         ip_finish(FW_IPS_ABORTED, FW_IP_E_TIMEOUT, FW_SC_QUICK);
 }
 
@@ -277,8 +281,9 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
         ip_stop(false);                                                 /* D-089: decelerate along the path */
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_command(&s_ax[a], FW_CMD_STOP);
         return FW_SRES_OK;
-    case FW_SYS_INTERP_START:
-        return ip_start();
+    case FW_SYS_INTERP_START:                    /* I-049: the path maths (libm double) runs in the motion task, not in */
+        s_ip_start_req = true;                   /* the Modbus client task that called this; result follows next pass */
+        return FW_SRES_RUNNING_CMD;
     case FW_SYS_START_ALL_REL:
     case FW_SYS_START_ALL_ABS:
         return start_all(cmd == FW_SYS_START_ALL_ABS);
@@ -383,6 +388,7 @@ static void motion_task(void *arg)
             else if (start_blocked()) __atomic_fetch_or(&s_sync_pending, 1u, __ATOMIC_SEQ_CST);   /* retried after the save */
             else s_dev.sys_cmd_result = start_all(false);                              /* external input: relative */
         }
+        if (s_ip_start_req) { s_ip_start_req = false; s_dev.sys_cmd_result = ip_start(); }   /* I-049 */
         ip_tick(now);                                                     /* D-089: before the axes book their pulses */
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_poll(&s_ax[a]);
 

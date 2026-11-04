@@ -160,6 +160,7 @@ table.kv td:first-child { color: var(--muted); width: 45%; }
           <button id="ipPreview">미리보기</button>
           <button class="primary" id="ipStart">▶ 보간 START</button>
           <button class="danger" id="ipStop">■ 정지 (경로 감속)</button>
+          <button id="ipZero" title="정지 중일 때 X·Y 현재 위치를 0으로 재설정 (SET_POSITION 0)">X·Y 위치 0 리셋</button>
           <button id="ipClear">궤적 지우기</button>
         </div>
         <div class="result" id="ipRes"></div>
@@ -477,6 +478,16 @@ $("#ipStart").onclick = async () => {
 };
 $("#ipStop").onclick = async () => { const r = await api("/api/sync", { cmd: "STOP" }); ipMsg(r.ok, `정지: ${r.text}`); };
 $("#ipClear").onclick = () => { IP.trace = []; ipDraw(); };
+$("#ipZero").onclick = async () => {
+  if (!confirm("X·Y축 현재 위치를 모두 0으로 바꿉니다. 계속할까요?")) return;
+  const rs = [];
+  for (const n of [1, 2]) rs.push(await api("/api/axis", { axis: n, cmd: "SET_POSITION", operands: { target: 0 } }));
+  const ok = rs.every(r => r.ok);
+  IP.trace = [];
+  if (ok && IP.preview) await ipDoPreview();      /* the preview starts at the current position */
+  else ipDraw();
+  ipMsg(ok, ok ? "X·Y 위치를 0으로 리셋했습니다" : `위치 리셋: X ${rs[0].text}, Y ${rs[1].text}`);
+};
 
 /* called on every state poll: records the live trace while an interpolation runs (server clock t_ms) */
 function ipRecord(s) {
