@@ -90,6 +90,7 @@
 | D-081 | 2026-11-01 | 사실 기록: 미쓰비시 MR-J3-□A CN1 펄스 입력 PP 10(+)/PG 11(−), 부호 NP 35(+)/NG 36(−), 서보 ON SON 15(DICOM 20 = +24 V, DOCOM 47 = 0 V). EMG 42·LSP 43·LSN 44가 켜져 있어야 운전된다. 허용 주파수와 파라미터 번호는 미확인 | 사용자 제공 CN1 결선도 | ③ 사용자 자료 |
 | D-082 | 2026-11-01 | 사실 기록: LS L7S CN1 펄스 입력 PF+ 9/PF− 10, PR+ 11/PR− 12, 서보 ON SVON 47(입력 공통 +24VIN 50). EMG 18·STOP 48·CWLIM 19·CCWLIM 20 처리 필요. 펄스+부호 모드에서 PR = 부호는 [추정]. 허용 주파수와 파라미터 번호는 미확인 | 사용자 제공 CN1 결선도 | ③ 사용자 자료 |
 | D-083 | 2026-11-01 | 사실 기록(웹 발췌, 원문 대조 전): 미쓰비시 MR-J3-□A와 LS L7S의 차동 지령 펄스 입력 상한은 1 Mpps(오픈컬렉터 200 kpps). MR-J3-A 펄스+부호 설정은 PA13 = 0001h(정논리)/0011h(부논리). L7S 펄스 형태 파라미터 번호와 두 기종의 입력 자동 ON 자리값은 미확인 | 03_design/hmi/wiring-cards.md 「웹 조사 보강」 출처 목록 | ③ 웹 조사 |
+| D-084 | 2026-11-04 | 사실 기록 + [권고 기본값]: 시험 보드(Waveshare ESP32-P4-ETH)의 칩은 ESP32-P4 **리비전 v1.3**이다(R-20 해소). v3.x와 하드웨어 비호환이므로 test-fw·firmware의 sdkconfig.defaults를 `ESP32P4_SELECTS_REV_LESS_V3=y`, 최소 리비전 v1.0, CPU **360 MHz**로 바꾼다(400 MHz 강제 옵션은 쓰지 않음). 400 MHz 전제 문구(architecture M3, D-024 근거)는 360 MHz로 읽는다. 양산 칩(P4NRW32 v1.3 단종 통지 PCN202600801 대상)과 v3.x 전환 여부는 G3에서 함께 판단한다(I-043 연동) | esptool chip 확인·부팅 로그(chip revision v1.3, cpu 360 MHz), ESP-IDF v5.5.3 Kconfig.hw_support | ④ 규칙 9 |
 
 ## 미확인 항목
 
