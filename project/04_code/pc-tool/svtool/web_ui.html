@@ -215,7 +215,8 @@ function axisCard(ax) {
   const el = document.createElement("div");
   el.className = "axis"; el.id = "ax" + ax.n;
   el.innerHTML = `
-    <h2>${ax.name}축 <span class="badge" data-k="state"></span><span class="spacer"></span></h2>
+    <h2>${ax.name}축 <span class="badge" data-k="state"></span><span class="spacer"></span>
+      <button data-zero title="정지 중일 때 현재 지령 위치를 0으로 재설정 (SET_POSITION 0)">위치 0 리셋</button></h2>
     <div class="readout">
       <span class="k">지령 위치 pulse</span><span class="v big" data-k="pos"></span>
       <span class="k">단위 위치</span><span class="v" data-k="upos"></span>
@@ -249,6 +250,9 @@ function axisCard(ax) {
     const op = b.dataset.cmd === "SET_POSITION" ? { target: +$("[data-op=target]", el).value } : undefined;
     send(ax.n, b.dataset.cmd, op);
   });
+  $("[data-zero]", el).onclick = () => {
+    if (confirm(`${ax.name}축 현재 위치를 0으로 바꿉니다. 계속할까요?`)) send(ax.n, "SET_POSITION", { target: 0 });
+  };
   $("[data-move]", el).onclick = () => {
     const acc = +$("[data-op=acc]", el).value;
     send(ax.n, $("[data-op=mode]", el).value, { target: +$("[data-op=target]", el).value,

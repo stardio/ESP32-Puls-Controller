@@ -78,6 +78,17 @@ def test_relative_move(web, sim):
     assert a["position"] == 5000 and not a["busy"]
 
 
+def test_position_reset_to_zero(web, sim):
+    post(web + "/api/axis", {"axis": 1, "cmd": "START_REL", "operands": {"target": 3000, "speed": 10000}})
+    _, r = post(web + "/api/axis", {"axis": 1, "cmd": "SET_POSITION", "operands": {"target": 0}})
+    assert not r["ok"]                                   # refused while the axis is moving
+    sim.clock.advance(2.0)
+    assert state(web)["axes"][0]["position"] == 3000
+    _, r = post(web + "/api/axis", {"axis": 1, "cmd": "SET_POSITION", "operands": {"target": 0}})
+    assert r["ok"], r
+    assert state(web)["axes"][0]["position"] == 0
+
+
 def test_operand_range_checked(web):
     _, r = post(web + "/api/axis", {"axis": 1, "cmd": "START_REL", "operands": {"target": 1, "speed": 10, "accel_ms": 5}})
     assert not r["ok"] and "accel_ms" in r["text"]
