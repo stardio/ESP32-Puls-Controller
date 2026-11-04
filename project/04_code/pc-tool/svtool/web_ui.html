@@ -106,6 +106,7 @@ td input { max-width: 180px; }
   <button data-tab="params">파라미터</button>
   <button data-tab="wiring">배선 점검</button>
   <button data-tab="backup">백업</button>
+  <button data-tab="help">도움말 (HELP)</button>
 </nav>
 
 <main>
@@ -132,6 +133,24 @@ td input { max-width: 180px; }
     <p>장치 설정(시스템, 축 파라미터, 포인트 테이블, 네트워크, 레거시 창)을 JSON 파일로 내려받습니다. 형식은 <code>svtool backup</code>과 같습니다.</p>
     <p><a href="/api/backup"><button class="primary">백업 파일 내려받기</button></a></p>
     <p class="note">복원은 차이 확인과 잠금 해제 절차가 있어 명령줄에서 합니다: <code>python -m svtool restore 파일 --target IP</code></p>
+  </section>
+
+  <section class="tab" id="tab-help">
+    <h3 style="margin:0 0 6px">하드웨어 GPIO 배정</h3>
+    <p class="note" id="hSource"></p>
+    <div class="toolbar">
+      <input id="hFilter" placeholder="검색: GPIO 번호, 신호, 커넥터 (예: 19, STOP, J15)" style="max-width:340px; font-family:inherit">
+    </div>
+    <div style="overflow-x:auto">
+      <table><thead><tr><th>GPIO</th><th>구분</th><th>신호</th><th>방향</th><th>극성·비고</th><th>커넥터</th></tr></thead>
+        <tbody id="hBody"></tbody></table>
+    </div>
+    <ul class="note" style="margin-top:12px; padding-left:18px">
+      <li>GPIO 번호는 ESP32-P4 칩 기준(3.3 V 로직)입니다. 보드 헤더의 물리 핀 위치는 보드 실크 인쇄를 확인하세요.</li>
+      <li>캐리어 커넥터(J7, J13 등)의 펄스 신호는 절연·차동(AM26C31) 후 출력이므로, 3.3 V 로직 분석기는 보드 헤더의 GPIO에서 측정합니다.</li>
+      <li>STOP 입력은 NC 접점입니다. 배선이 끊기면 정지 상태가 됩니다(안전 측). START·예비 입력 LOW 활성은 권고값이며 보드에서 아직 확인하지 않았습니다.</li>
+      <li>값은 펌웨어 빌드 설정(menuconfig)으로 바꿀 수 있습니다. 바꾼 펌웨어에서는 이 표가 실제와 다를 수 있습니다.</li>
+    </ul>
   </section>
 </main>
 
@@ -167,7 +186,27 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
   if (b.dataset.tab === "params") loadParams();
+  if (b.dataset.tab === "help") loadHelp();
 });
+
+// ---------- help ----------
+let helpPins = null;
+async function loadHelp() {
+  if (!helpPins) {
+    const r = await api("/api/help");
+    helpPins = r.pins;
+    $("#hSource").textContent = "출처: " + r.source;
+  }
+  renderHelp();
+}
+function renderHelp() {
+  const q = $("#hFilter").value.trim().toLowerCase();
+  const rows = helpPins.filter(p => !q || [p.gpio, p.group, p.signal, p.note, p.connector].join(" ").toLowerCase().includes(q));
+  $("#hBody").innerHTML = rows.map(p => `<tr><td class="mono" style="color:var(--ink); font-weight:700">GPIO${p.gpio}</td>
+    <td>${p.group}</td><td>${p.signal}</td><td>${p.dir}</td><td class="note">${p.note}</td><td class="mono">${p.connector}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="note">일치하는 항목이 없습니다.</td></tr>`;
+}
+$("#hFilter").oninput = () => helpPins && renderHelp();
 
 // ---------- axis cards ----------
 function axisCard(ax) {

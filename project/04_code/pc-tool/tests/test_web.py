@@ -1,5 +1,7 @@
 """svtool web: HTTP API against the simulator (FakeClock), plus the request guards."""
 import json
+import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -116,6 +118,21 @@ def test_backup_download(web):
     assert code == 200 and "attachment" in hdr["Content-Disposition"]
     data = json.loads(body)
     assert data["format"] == "svtool-backup" and data["regmap_version"] == R.REGMAP_VERSION
+
+
+def kconfig_gpio_defaults():
+    """GPIO defaults from the product firmware Kconfig (the source of truth for the HELP pin table)."""
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "firmware", "main", "Kconfig.projbuild")
+    text = open(path, encoding="utf-8").read()
+    return {name: int(v) for name, v in re.findall(r"config (FW_\w+_GPIO)\s+int [^\n]*\n\s+default (-?\d+)", text)}
+
+
+def test_help_pins_match_firmware_kconfig(web):
+    pins = json.loads(get(web + "/api/help")[2])["pins"]
+    table = {p["kconfig"]: p["gpio"] for p in pins if p["kconfig"]}
+    assert table == kconfig_gpio_defaults()                 # every firmware GPIO listed, none stale
+    gpios = [p["gpio"] for p in pins]
+    assert len(gpios) == len(set(gpios))
 
 
 def test_device_down_reports_503():

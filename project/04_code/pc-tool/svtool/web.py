@@ -38,6 +38,42 @@ PAGE_COMMANDS = {"START_ABS", "START_REL", "STOP", "QUICK_STOP", "ALARM_RESET", 
                  "TEST_NEG", "HOME", "SET_POSITION"}
 
 
+# HELP tab pin table. Values must equal the product firmware Kconfig defaults (firmware/main/Kconfig.projbuild,
+# design-baseline-v0.4 sec.2, D-069); tests/test_web.py checks that. Rows: (Kconfig name or "", GPIO, group, signal,
+# direction, polarity / note, connector).
+PIN_TABLE = [
+    ("FW_X_PLS_GPIO", 25, "펄스 출력", "X축 펄스 (PLS)", "출력", "ISO7720 → AM26C31 1A, 차동 출력", "J7 PULS(X)"),
+    ("FW_X_DIR_GPIO", 32, "펄스 출력", "X축 방향 (DIR)", "출력", "ISO7720 → AM26C31 2A, 차동 출력", "J7 PULS(X)"),
+    ("FW_Y_PLS_GPIO", 20, "펄스 출력", "Y축 펄스 (PLS)", "출력", "ISO7720 U16 → AM26C31 3A (1축 모델 미사용)", "J13 PULS(Y)"),
+    ("FW_Y_DIR_GPIO", 21, "펄스 출력", "Y축 방향 (DIR)", "출력", "AM26C31 4A (1축 모델 미사용)", "J13 PULS(Y)"),
+    ("FW_OE_GPIO", 33, "펄스 출력", "펄스 출력 허용 (두 축 공용)", "출력", "HIGH = 허용, 부팅 시 LOW (TLP2361 → AM26C31 /G)", "–"),
+    ("FW_X_START_GPIO", 54, "입력", "X축 START (DI1)", "입력", "엣지 동작, LOW 활성", "J15 D/I(X)"),
+    ("FW_X_STOP_GPIO", 19, "입력", "X축 STOP (DI2)", "입력", "NC 접점, HIGH 활성 = 정지. MCPWM 하드웨어 차단 경로", "J15 D/I(X)"),
+    ("FW_X_DI3_GPIO", 18, "입력", "X축 예비 DI3 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J15 D/I(X)"),
+    ("FW_X_DI4_GPIO", 17, "입력", "X축 예비 DI4 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J15 D/I(X)"),
+    ("FW_Y_START_GPIO", 7, "입력", "Y축 START (DI5)", "입력", "엣지 동작, LOW 활성", "J16 D/I(Y)"),
+    ("FW_Y_STOP_GPIO", 8, "입력", "Y축 STOP (DI6)", "입력", "NC 접점, HIGH 활성 = 정지. 미배선이면 정지 상태로 읽힘", "J16 D/I(Y)"),
+    ("FW_Y_DI7_GPIO", 15, "입력", "Y축 예비 DI7 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J16 D/I(Y)"),
+    ("FW_Y_DI8_GPIO", 16, "입력", "Y축 예비 DI8 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J16 D/I(Y)"),
+    ("FW_DO1_GPIO", 23, "출력", "DO1 X축 서보 ON", "출력", "드라이브 SVON", "–"),
+    ("FW_DO2_GPIO", 26, "출력", "DO2 Y축 서보 ON", "출력", "드라이브 SVON", "–"),
+    ("FW_DO3_GPIO", 27, "출력", "DO3 범용 출력", "출력", "user_do b0", "–"),
+    ("FW_DO4_GPIO", 46, "출력", "DO4 범용 출력", "출력", "user_do b1", "–"),
+    ("FW_RS485_TX_GPIO", 24, "통신", "RS-485 TX", "출력", "RTU 모델", "–"),
+    ("FW_RS485_RX_GPIO", 47, "통신", "RS-485 RX", "입력", "RTU 모델", "–"),
+    ("FW_RS485_DE_GPIO", 48, "통신", "RS-485 DE (송신 허용)", "출력", "RTU 모델, UART RTS", "–"),
+    ("FW_PHY_RESET_GPIO", 51, "통신", "이더넷 PHY(IP101) 리셋", "출력", "보드 내장", "RJ45"),
+    ("", 37, "보드", "콘솔 UART TX", "출력", "USB 시리얼 로그 115200 bps (부팅 로그 기준)", "USB"),
+    ("", 38, "보드", "콘솔 UART RX", "입력", "USB 시리얼", "USB"),
+]
+
+
+def help_info():
+    return {"pins": [{"kconfig": k, "gpio": g, "group": grp, "signal": sig, "dir": d, "note": note, "connector": con}
+                     for k, g, grp, sig, d, note, con in PIN_TABLE],
+            "source": "제품 펌웨어 Kconfig 기본값(firmware/main/Kconfig.projbuild), design-baseline-v0.4 §2, D-069"}
+
+
 def bits(word, table):
     return [name for b, name in table if word >> b & 1]
 
@@ -246,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
             with open(PAGE, "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8")
         q = parse_qs(u.query)
+        if u.path == "/api/help":
+            return self._guard(lambda: (200, help_info()))
         if u.path == "/api/state":
             return self._guard(lambda: (200, self.bridge.state()))
         if u.path == "/api/params":
