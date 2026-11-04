@@ -9,7 +9,7 @@
 | ① 기획·조사 | 완료 | market-research.md, competitor-analysis.md, summary.md, handoff.md (project/01_market) | 2차 실행. 결정 D-005~D-008 반영 |
 | ② 요구사항 | 완료 | srs.md v0.9, marketing-review.md, handoff.md (project/02_requirements) | D-009~D-022 반영. G2 필수 질문 0건. G2 승인 요청 가능(조건은 「다음 할 일」 참조) |
 | ③ 설계 | 진행중 | design-baseline-v0.4.md(v0.4.1, 현행 기준선), reviews/baseline-v0.4-review.md, bom-schematic.md v0.4, power-budget.md, schematic-reconciliation.md | 2축 실측(D-067) 후 G3. 시험 펌웨어 핀 수정 → 사용자 PC 실측 |
-| ④ 구현 | 진행중(예외) | 04_code/test-fw(시험, 리뷰 4차·T-15 추가), 04_code/firmware(2축 제품, 리뷰 2차 통과) | D-025·D-071 예외. ESP-IDF v5.5.3 실제 빌드 6벌 OK(2026-11-03 로컬 PC, 프로젝트 경고 0, 앱 파티션 여유 50~52%). 2026-11-04 칩 v1.3 확인 → 리비전 v1.x·360 MHz로 재빌드(D-084), 시험 펌웨어 플래시·부팅·Modbus TCP 응답 확인. 현재 보드에는 벤치 빌드(2axis_tcp + sdkconfig.bench, D-085) 탑재, PC 웹 UI(svtool web)로 X·Y 이동 확인. 남은 것: 보드 실측(T-03~T-09·T-11·T-12·T-15), Minor n-01·n-02 |
+| ④ 구현 | 진행중(예외) | 04_code/test-fw(시험, 리뷰 4차·T-15 추가), 04_code/firmware(2축 제품, 리뷰 2차 통과) | D-025·D-071 예외. ESP-IDF v5.5.3 실제 빌드 6벌 OK(2026-11-03 로컬 PC, 프로젝트 경고 0, 앱 파티션 여유 50~52%). 2026-11-04 칩 v1.3 확인 → 리비전 v1.x·360 MHz로 재빌드(D-084), 시험 펌웨어 플래시·부팅·Modbus TCP 응답 확인. 현재 보드에는 벤치 빌드(2axis_tcp + sdkconfig.bench, D-085) 탑재, 핀 변경(D-087: X 펄스 22, RS-485 TX 14) 반영, PC 웹 UI(svtool web)로 X·Y 이동 확인. 남은 것: 보드 실측(T-03~T-09·T-11·T-12·T-15), Minor n-01·n-02 |
 | ⑤ 검증 | 대기 | – | |
 | ⑥ 문서 | 대기 | – | |
 | ⑦ 마케팅 | 진행중(사전 마케팅) | marketing-plan, pricing-proposal v0.2, catalog, proposal, handoff (project/07_marketing) | D-031 예외: G6 전 초안·제안만. 잠정 판매가 1축 149,000원·2축 199,000원 VAT 별도(D-032). 확정은 G6 |
@@ -64,12 +64,12 @@
 | I-043 | 2026-10-30 | 사용자 / 메인 세션 | 03_design (DC-01·03), decisions D-024 | 원가 절감안 A: MCU를 ESP32-P4 ETH 모듈에서 ESP32-S3로, 이더넷을 온보드 IP101에서 W5500(SPI) 모듈로 바꾼다(사용자 추정 약 1만원 절감). 영향: D-024 기준선(P4 1 MHz 운전 실적, D-028)이 그대로 이어지지 않음, S3의 MCPWM·PCNT 2축 자원과 W5500 SPI 처리량·지연 확인 필요. P4 칩 단종 통지(PCN202600801) 위험은 줄어듦. 2026-11-04 시험 보드가 단종 대상 v1.3 칩으로 확인됨(D-084): P4 유지 시 v3.x 보드 전환·재검증 필요 | 보류(D-036: G3 이후 S3 실측·결정. 검토서 cost-reduction-review.md, cost-reduction-bom.md) |
 | I-044 | 2026-10-30 | 사용자 / 메인 세션 | 02_requirements (D-017, D-019, FR-022), 03_design | 원가 절감안 B: TCP 모델과 RTU 모델을 옵션으로 분리한다(사용자 추정 약 5천원 절감). 영향: RTU 전용 모델은 G2에서 확정한 'HMI와 Modbus TCP·유선 이더넷'(D-017, D-019)과 충돌하므로 SRS 개정(G2 이후 변경)이 필요. RTU 모델 HMI 연결은 패널=RS-485 RTU 마스터, 컨트롤러=슬레이브(사용자 확인). 기존 RS-485 RTU 마스터(드라이브 측) 용도와의 구분 확인 필요. SKU가 1·2축 × TCP·RTU로 늘어남 | 방식 결정(D-034 공용 PCB 미실장). SRS 개정(D-017·D-019 대체) 필요 |
 | I-045 | 2026-11-01 | 사용자 / 메인 세션 | 03_design/hmi/wiring-cards.md | 드라이브 결선 실물 확인 보류(사용자 지시: 하드웨어 결선은 나중에 확인). 남은 항목: 대우 SVON 공통(COM1 7) [추정], MR-J3-A PA13 원문·PD01 자리값, L7S 펄스 형태 파라미터·입력 자동 ON, 두 기종 1 Mpps 원문 대조(D-083 웹 발췌) | 보류(실물 결선 시 확인) |
-| I-046 | 2026-11-04 | 사용자 / 메인 세션 | 03_design/cpu-board-options.md (CPU-OPT-001 v0.2) | F1 보드(칩 v1.3) 단종 위험으로 자체 CPU 보드 검토. 권고 A1(P4 v3.x 칩 실장 분리형 4층, F1 헤더 호환). 결정 후보 DC-30~DC-35. architect 리뷰 1차 "조건부 유지" 반영(GPIO54는 v3.x에도 유지 확인, USB는 GPIO24/25 충돌로 USB-UART 브리지 권고) | 사용자 결정 대기(DC-30·DC-32) |
+| I-046 | 2026-11-04 | 사용자 / 메인 세션 | 03_design/cpu-board-options.md (CPU-OPT-001 v0.2) | F1 보드(칩 v1.3) 단종 위험으로 자체 CPU 보드 검토. 권고 A1(P4 v3.x 칩 실장 분리형 4층, F1 헤더 호환). 결정 후보 DC-30~DC-35. architect 리뷰 1차 "조건부 유지" 반영(GPIO54는 v3.x에도 유지 확인, USB는 GPIO24/25 충돌로 USB-UART 브리지 권고) | 결정됨: D(완성 보드 유지, D-086). USB 핀 충돌은 D-087로 해소. 구매 시 칩 리비전 확인 필요 |
 | I-047 | 2026-11-04 | architect 리뷰 | 03_design/design-baseline-v0.4.md §3 | "STOP(하드웨어)" 행이 외부 AND 게이트 기준(D-070은 MCPWM fault가 1차), "1 MHz 운전 실적" 문구가 D-078(1 MHz는 파형 확인, 실모터 400 kpps)과 어긋남 | 미해결(기준선 개정 시 반영) |
 
 ## 다음 할 일
 
-- 사용자 결정 요청(G3 전): CPU 보드 형태 DC-30·평가 보드 구매 DC-32(I-046), DC-10(시험 펌웨어 담당·장비, I-027), 하드웨어 설계 담당(I-028 → DC-33 "사용자"로 정리 제안), 원가 판정 기준(DC-13, I-029)
+- 사용자 결정 요청(G3 전): DC-10(시험 펌웨어 담당·장비, I-027), 하드웨어 설계 담당(I-028 → DC-33 "사용자"로 정리 제안), 원가 판정 기준(DC-13, I-029)
 - G3 전 실측 T-01~T-09 실시 후 결과를 03_design에 반영(architect). 병행: AM26C31·STM32 데이터시트 대조(I-032), 두산·이지뷰·M2I 자료 확인(I-024, Q26)
 - 실측 결과가 갖춰지면 PM이 재점검해 G3 승인 요청 가능 여부를 다시 판정
 - 권장: 제조사 도메인(mitsubishielectric.com, deltaww.com 등)과 두산·이지뷰·M2I 사이트, 유통사(lcsc.com) 허용

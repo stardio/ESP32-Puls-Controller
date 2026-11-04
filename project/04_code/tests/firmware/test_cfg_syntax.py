@@ -194,11 +194,11 @@ def test_every_config_used_is_declared():
 
 # signal table: design-baseline-v0.4 sec.2 and D-069
 EXPECTED_PINS = {
-    "FW_X_PLS_GPIO": 25, "FW_X_DIR_GPIO": 32, "FW_Y_PLS_GPIO": 20, "FW_Y_DIR_GPIO": 21, "FW_OE_GPIO": 33,
+    "FW_X_PLS_GPIO": 22, "FW_X_DIR_GPIO": 32, "FW_Y_PLS_GPIO": 20, "FW_Y_DIR_GPIO": 21, "FW_OE_GPIO": 33,
     "FW_X_START_GPIO": 54, "FW_X_STOP_GPIO": 19, "FW_X_DI3_GPIO": 18, "FW_X_DI4_GPIO": 17,
     "FW_Y_START_GPIO": 7, "FW_Y_STOP_GPIO": 8, "FW_Y_DI7_GPIO": 15, "FW_Y_DI8_GPIO": 16,
     "FW_DO1_GPIO": 23, "FW_DO2_GPIO": 26, "FW_DO3_GPIO": 27, "FW_DO4_GPIO": 46,
-    "FW_RS485_TX_GPIO": 24, "FW_RS485_RX_GPIO": 47, "FW_RS485_DE_GPIO": 48, "FW_PHY_RESET_GPIO": 51,
+    "FW_RS485_TX_GPIO": 14, "FW_RS485_RX_GPIO": 47, "FW_RS485_DE_GPIO": 48, "FW_PHY_RESET_GPIO": 51,
 }
 
 

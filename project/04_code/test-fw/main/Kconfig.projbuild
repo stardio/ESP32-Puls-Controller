@@ -1,8 +1,8 @@
 menu "TFW test firmware (D-025, G3 pre-test only)"
 
     config TFW_AX1_PLS_GPIO
-        int "Axis 1 pulse GPIO (also PCNT loop-back input)"
-        default 25
+        int "Axis 1 pulse GPIO (also PCNT loop-back input). 22, not 25: GPIO24/25 = USB Serial/JTAG (D-087)"
+        default 22
     config TFW_AX1_DIR_GPIO
         int "Axis 1 direction GPIO"
         default 32

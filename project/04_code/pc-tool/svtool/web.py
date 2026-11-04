@@ -42,7 +42,7 @@ PAGE_COMMANDS = {"START_ABS", "START_REL", "STOP", "QUICK_STOP", "ALARM_RESET", 
 # design-baseline-v0.4 sec.2, D-069); tests/test_web.py checks that. Rows: (Kconfig name or "", GPIO, group, signal,
 # direction, polarity / note, connector).
 PIN_TABLE = [
-    ("FW_X_PLS_GPIO", 25, "펄스 출력", "X축 펄스 (PLS)", "출력", "ISO7720 → AM26C31 1A, 차동 출력", "J7 PULS(X)"),
+    ("FW_X_PLS_GPIO", 22, "펄스 출력", "X축 펄스 (PLS)", "출력", "ISO7720 → AM26C31 1A, 차동 출력 (D-087: 25 → 22)", "J7 PULS(X)"),
     ("FW_X_DIR_GPIO", 32, "펄스 출력", "X축 방향 (DIR)", "출력", "ISO7720 → AM26C31 2A, 차동 출력", "J7 PULS(X)"),
     ("FW_Y_PLS_GPIO", 20, "펄스 출력", "Y축 펄스 (PLS)", "출력", "ISO7720 U16 → AM26C31 3A (1축 모델 미사용)", "J13 PULS(Y)"),
     ("FW_Y_DIR_GPIO", 21, "펄스 출력", "Y축 방향 (DIR)", "출력", "AM26C31 4A (1축 모델 미사용)", "J13 PULS(Y)"),
@@ -59,12 +59,14 @@ PIN_TABLE = [
     ("FW_DO2_GPIO", 26, "출력", "DO2 Y축 서보 ON", "출력", "드라이브 SVON", "–"),
     ("FW_DO3_GPIO", 27, "출력", "DO3 범용 출력", "출력", "user_do b0", "–"),
     ("FW_DO4_GPIO", 46, "출력", "DO4 범용 출력", "출력", "user_do b1", "–"),
-    ("FW_RS485_TX_GPIO", 24, "통신", "RS-485 TX", "출력", "RTU 모델", "–"),
+    ("FW_RS485_TX_GPIO", 14, "통신", "RS-485 TX", "출력", "RTU 모델 (D-087: 24 → 14)", "–"),
     ("FW_RS485_RX_GPIO", 47, "통신", "RS-485 RX", "입력", "RTU 모델", "–"),
     ("FW_RS485_DE_GPIO", 48, "통신", "RS-485 DE (송신 허용)", "출력", "RTU 모델, UART RTS", "–"),
     ("FW_PHY_RESET_GPIO", 51, "통신", "이더넷 PHY(IP101) 리셋", "출력", "보드 내장", "RJ45"),
-    ("", 37, "보드", "콘솔 UART TX", "출력", "USB 시리얼 로그 115200 bps (부팅 로그 기준)", "USB"),
-    ("", 38, "보드", "콘솔 UART RX", "입력", "USB 시리얼", "USB"),
+    ("", 37, "보드", "콘솔 UART TX", "출력", "보드 USB-C의 CH343 USB-UART 경유, 115200 bps (플래시·로그)", "USB-C"),
+    ("", 38, "보드", "콘솔 UART RX", "입력", "보드 USB-C의 CH343 USB-UART 경유", "USB-C"),
+    ("", 24, "USB", "내장 USB Serial/JTAG 신호", "입출력", "펌웨어가 쓰지 않음(D-087). D−/D+ 중 어느 쪽인지는 데이터시트 확인 필요", "헤더"),
+    ("", 25, "USB", "내장 USB Serial/JTAG 신호", "입출력", "펌웨어가 쓰지 않음(D-087). USB 선을 연결하면 두 번째 COM 포트(로그·JTAG)", "헤더"),
 ]
 
 

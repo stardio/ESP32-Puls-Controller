@@ -611,19 +611,20 @@ TEST(t_v04_servo_on_outputs)                             /* F-09 */
 }
 TEST(t_v04_reserved_pins_and_default_axis_pins)          /* F-08, F-01, F-02 */
 {
-    const int must[] = {17, 18, 19, 54, 23, 26, 27, 46, 24, 47, 48, 33, 51};
+    const int must[] = {17, 18, 19, 54, 23, 26, 27, 46, 14, 47, 48, 33, 51, 24, 25};
     for (unsigned i = 0; i < sizeof must / sizeof must[0]; ++i) {
         int found = 0;
         for (unsigned j = 0; j < TFW_RESERVED_PIN_COUNT; ++j) if (tfw_reserved_pins[j] == must[i]) found = 1;
         CHECK(found);
     }
-    const int ax1[2] = {25, 32}, ax2[2] = {20, 21};
+    const int ax1[2] = {22, 32}, ax2[2] = {20, 21};                                  /* D-087: axis 1 pulse 25 -> 22 */
     CHECK(!tfw_pin_conflict(ax1, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
     CHECK(!tfw_pin_conflict(ax2, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
-    const int old_en[2] = {25, 33}, dup_di[2] = {20, 18};
+    const int usb[2] = {25, 32}, old_en[2] = {22, 33}, dup_di[2] = {20, 18};
+    CHECK(tfw_pin_conflict(usb, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));      /* 25 is USB D+/D- now (D-087) */
     CHECK(tfw_pin_conflict(old_en, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));   /* 33 is the OE now, not an axis EN */
     CHECK(tfw_pin_conflict(dup_di, 2, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
-    const int dbg[1] = {22};                                                         /* F-11 candidate (15/16 are DI on schematic r2) */
+    const int dbg[1] = {2};                                                          /* F-11 candidate: 22 is axis 1 pulse (D-087) */
     CHECK(!tfw_pin_conflict(dbg, 1, tfw_reserved_pins, TFW_RESERVED_PIN_COUNT));
 }
 TEST(t_v04_start_edge_debounced_once)

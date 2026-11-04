@@ -4,6 +4,8 @@
 |---|---|---|---|---|
 | CPU-OPT-001 | 0.2 | 메인 세션(경량 모드) | 2026-11-04 | decisions.md D-024·D-036·D-047·D-061·D-068~D-073·D-078·D-084·D-085, parts-comparison.md v0.2(PS-23·PS-24·PS-27), bom-draft.md v0.2, cost-reduction-bom.md v0.1, cost-reduction-review.md, design-baseline-v0.4.md, 2026-11-04 웹 조사(§10) |
 
+**결정(2026-11-04, D-086): 사용자가 D(완성 보드 구매 유지)를 선택했다. 권고 A1은 채택되지 않았다. USB 핀 충돌(R4)은 D-087로 해소했다(X 펄스 22, RS-485 TX 14).**
+
 변경 이력: v0.1 → v0.2 architect 리뷰(reviews/cpu-board-options-review-1.md, 판정 "조건부 유지") 반영. C-01 해소(GPIO54 유지 확인), M-01~M-08·m-01~m-09 반영.
 
 > **목적.** Waveshare ESP32-P4-ETH 보드(F1)에 의존하지 않도록 필요한 기능만 넣은 CPU 보드를 직접 만드는 방안을 비교한다. G3(MCU 기준선 확정, D-024)에 올릴 근거 자료다.

@@ -1,4 +1,4 @@
-/* Modbus RTU slave on RS-485 (ISO1500, TX 24 / RX 47 / DE 48). Pattern: servo1axis movion_modbus_rtu_master.c (UART1,
+/* Modbus RTU slave on RS-485 (ISO1500, TX 14 / RX 47 / DE 48, D-087). Pattern: servo1axis movion_modbus_rtu_master.c (UART1,
  * uart_set_mode RS485 half duplex with RTS = DE). The register map and commands are the same as TCP (fw_motion_process_pdu).
  * Frame end = silence of 3.5 characters (fixed 2 ms above 19200 baud, tick resolution 1 ms). NOT hardware tested. */
 #include <string.h>

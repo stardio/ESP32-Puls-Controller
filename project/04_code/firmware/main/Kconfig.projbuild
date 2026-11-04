@@ -25,8 +25,8 @@ menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
         default 0
 
     config FW_X_PLS_GPIO
-        int "X axis pulse GPIO (ISO7720 U1 -> AM26C31 1A)"
-        default 25
+        int "X axis pulse GPIO (ISO7720 U1 -> AM26C31 1A). 22, not 25: GPIO24/25 = USB Serial/JTAG (D-087)"
+        default 22
     config FW_X_DIR_GPIO
         int "X axis direction GPIO"
         default 32
@@ -94,8 +94,8 @@ menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
         default 46
 
     config FW_RS485_TX_GPIO
-        int "RS-485 TX"
-        default 24
+        int "RS-485 TX. 14, not 24: GPIO24/25 = USB Serial/JTAG (D-087)"
+        default 14
     config FW_RS485_RX_GPIO
         int "RS-485 RX"
         default 47

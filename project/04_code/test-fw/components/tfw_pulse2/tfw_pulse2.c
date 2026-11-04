@@ -261,7 +261,7 @@ esp_err_t tfw_pulse2_init(uint8_t axis_count, uint32_t res_hz, uint32_t upd_us, 
         oe_set(false);                            /* output forbidden until the axes are up */
     }
     /* F-08: the shared pulse output enable (CONFIG_TFW_PULSE_OE_GPIO) and the reserved list (tfw_reserved_pins:
-     * 17/18/19/54 DI, 23/26/27/46 DO, 24/47/48 RS-485, 33 OE, 51 PHY reset) are checked as well. */
+     * 17/18/19/54/7/8/15/16 DI, 23/26/27/46 DO, 14/47/48 RS-485, 33 OE, 51 PHY reset, 24/25 USB) are checked as well. */
     const int ax1[2] = {CONFIG_TFW_AX1_PLS_GPIO, CONFIG_TFW_AX1_DIR_GPIO};
     const int ax2[2] = {CONFIG_TFW_AX2_PLS_GPIO, CONFIG_TFW_AX2_DIR_GPIO};
     int other[TFW_RESERVED_PIN_COUNT + 6] = {CONFIG_TFW_ESTOP_GPIO, CONFIG_TFW_ESTOP2_GPIO, CONFIG_TFW_START_GPIO,

@@ -33,8 +33,8 @@
 
 | 신호 | MCU 자원 | GPIO | 근거·상태 |
 |---|---|---|---|
-| AX1_PLS (PULSE 또는 CW) | MCPWM 그룹 0 타이머·오퍼레이터·비교기·제너레이터 A | **GPIO25** | 기존 1축[E1][E4] |
-| AX1 펄스 계수 | PCNT 유닛 0, 채널 0 엣지 입력 = AX1_PLS 같은 핀(루프백) | GPIO25(공유) | 기존 1축[E1]. 점퍼 불필요[E6] |
+| AX1_PLS (PULSE 또는 CW) | MCPWM 그룹 0 타이머·오퍼레이터·비교기·제너레이터 A | **GPIO22** (D-087, 이전 GPIO25) | 기존 1축[E1][E4] |
+| AX1 펄스 계수 | PCNT 유닛 0, 채널 0 엣지 입력 = AX1_PLS 같은 핀(루프백) | GPIO22(공유) | 기존 1축[E1]. 점퍼 불필요[E6] |
 | AX1_DIR (DIR 또는 CCW) | Step/Dir: GPIO 출력 / CW/CCW: 그룹 0 제너레이터 B 또는 핀 전환 | **GPIO32** | 기존 1축(GPIO)[E4]. CW/CCW 구현 자원 미확인(architecture §4.3) |
 | AX1_SVON / Enable | GPIO 출력 | **GPIO33** | 기존 Enable(운전 중 자동 ON)[E4][E5] |
 | AX2_PLS | MCPWM 그룹 1 | 미확인 | 후보: W5500 제외로 비는 GPIO2~6·14[E2] [가정, PS-27 대조 필요] |
@@ -61,7 +61,7 @@
 | EXT_START (선택) | 입력 | GPIO | **GPIO54** | 1 / 1 | 기존 Active-LOW·풀업[E5]. SRS 요구 아님 [가정: 레거시 호환 선택] |
 | AXn_HOME, LIMP, LIMN, ALM, INP | 입력 | GPIO + 엣지 인터럽트(INP는 폴링) | 미확인 | 5 / 10 | 신규. 원점 엣지 시 PCNT 값 스냅샷 |
 | AUX_OUT1~4 (레거시 Servo ON 코일) | 출력 | GPIO | GPIO23·26·27·46 | 4 / — | 기존 보조 출력[E7]. 제품에서는 AXn_SVON으로 재배정 [가정] |
-| RS485_TX / RX / DE | 출력/입력/출력 | UART1 | GPIO24 / GPIO47 / GPIO48 | 공통 | 기존 ISO1500 경로[E3][E7] |
+| RS485_TX / RX / DE | 출력/입력/출력 | UART1 | GPIO14 / GPIO47 / GPIO48 (D-087, TX 이전 GPIO24) | 공통 | 기존 ISO1500 경로[E3][E7] |
 | ESTOP_GATE_FB (선택) | 입력 | GPIO | 미확인 | 1 / 1 | 외부 게이트 되읽기 |
 | MODEL_ID0/1 | 입력 | GPIO | 미확인 | 공통 | DC-07 |
 | STATUS_LED ×2 | 출력 | GPIO | 미확인 | 공통 | |
@@ -70,7 +70,7 @@
 
 ### 2.4 시험 펌웨어(TFW) 핀 사용
 
-- TFW는 축1 = 기존 GPIO25/32/33, ESTOP = GPIO19를 쓴다. 축2 핀은 TFW 빌드 설정값(`TFW_AX2_PLS_GPIO` 등)으로 두고 PS-27 결과 전에는 사용자가 배선에 맞춰 지정한다(modules/TFW-02).
+- TFW는 축1 = GPIO22/32/33(D-087, 이전 25), ESTOP = GPIO19를 쓴다. 축2 핀은 TFW 빌드 설정값(`TFW_AX2_PLS_GPIO` 등)으로 두고 PS-27 결과 전에는 사용자가 배선에 맞춰 지정한다(modules/TFW-02).
 
 ### 2.5 (대안) STM32F407VGT6 배정 — v0.1 유지
 

@@ -98,9 +98,10 @@ TFW_INLINE uint32_t tfw_sat_mul(uint32_t a, uint32_t b)
 TFW_INLINE uint32_t tfw_upd_ref_us(bool task_mode, uint32_t cfg_upd_us) { return task_mode ? 10000u : cfg_upd_us; }
 /* M-08: true if any pin of a[] (>= 0) appears twice in a[] or also appears in b[] (>= 0). */
 bool tfw_pin_conflict(const int *a, size_t na, const int *b, size_t nb);
-/* F-08: pins the carrier board uses for other purposes (PHY reset 51; DI 17/18/19/54; DO 23/26/27/46; RS-485 24/47/48;
- * pulse output enable 33). Axis pins and debug/probe pins must not be any of these. */
-#define TFW_RESERVED_PIN_COUNT 17u
+/* F-08: pins the carrier board uses for other purposes (PHY reset 51; DI 17/18/19/54/7/8/15/16; DO 23/26/27/46;
+ * RS-485 14/47/48; pulse output enable 33) and the USB Serial/JTAG pins 24/25 (D-087). Axis pins and debug/probe pins
+ * must not be any of these. */
+#define TFW_RESERVED_PIN_COUNT 19u
 extern const int tfw_reserved_pins[TFW_RESERVED_PIN_COUNT];
 /* F-03: level of the shared pulse output enable pin. allow=true -> HIGH unless active_low. */
 TFW_INLINE int tfw_oe_level(bool allow, bool active_low) { return (allow != active_low) ? 1 : 0; }

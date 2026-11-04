@@ -146,6 +146,7 @@ td input { max-width: 180px; }
         <tbody id="hBody"></tbody></table>
     </div>
     <ul class="note" style="margin-top:12px; padding-left:18px">
+      <li><b>D-087(2026-11-04):</b> X축 펄스 GPIO25 → <b>GPIO22</b>, RS-485 TX GPIO24 → <b>GPIO14</b>로 옮겼습니다. GPIO24·25는 칩 내장 USB Serial/JTAG 핀이라 비워 둡니다. 이전 캐리어(r2)는 GPIO25·24에 배선되어 있으므로 새 캐리어에서 바꿔야 합니다.</li>
       <li>GPIO 번호는 ESP32-P4 칩 기준(3.3 V 로직)입니다. 보드 헤더의 물리 핀 위치는 보드 실크 인쇄를 확인하세요.</li>
       <li>캐리어 커넥터(J7, J13 등)의 펄스 신호는 절연·차동(AM26C31) 후 출력이므로, 3.3 V 로직 분석기는 보드 헤더의 GPIO에서 측정합니다.</li>
       <li>STOP 입력은 NC 접점입니다. 배선이 끊기면 정지 상태가 됩니다(안전 측). START·예비 입력 LOW 활성은 권고값이며 보드에서 아직 확인하지 않았습니다.</li>
