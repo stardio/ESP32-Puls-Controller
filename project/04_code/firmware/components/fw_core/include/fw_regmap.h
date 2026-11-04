@@ -34,7 +34,14 @@ enum { FW_RES_OK = 0, FW_RES_BUSY_RUN = 1, FW_RES_ESTOP = 0x10, FW_RES_ALARM = 0
 enum { FW_SYS_ESTOP_RELEASE = 1, FW_SYS_SAVE = 2, FW_SYS_LOAD_DEFAULT = 3, FW_SYS_REBOOT = 4, FW_SYS_CLEAR_HIST = 5,
        FW_SYS_STOP_ALL = 6, FW_SYS_FACTORY_RESET = 7, FW_SYS_NET_RESET = 8,
        FW_SYS_START_ALL_REL = 9, FW_SYS_START_ALL_ABS = 10,   /* D-088: both axes in one 1 ms pass, all-or-nothing */
-       FW_SYS_LAST = FW_SYS_START_ALL_ABS, FW_SYS_NET_APPLY = 0x100 /* internal: write of 0x400F */ };
+       FW_SYS_INTERP_START = 11,                              /* D-089: X/Y interpolation from 0x0150.. */
+       FW_SYS_LAST = FW_SYS_INTERP_START, FW_SYS_NET_APPLY = 0x100 /* internal: write of 0x400F */ };
+/* D-089 interpolation block 0x0150..0x015F (offsets into fw_dev_t.ip; 32-bit values low word first) */
+#define FW_IP_BASE  0x0150u
+#define FW_IP_WORDS 14u
+enum { FW_IPO_MODE = 0, FW_IPO_ABS = 1, FW_IPO_END_X = 2, FW_IPO_END_Y = 4, FW_IPO_CTR_I = 6, FW_IPO_CTR_J = 8,
+       FW_IPO_FEED = 10, FW_IPO_ACCEL = 12, FW_IPO_DECEL = 13 };
+enum { FW_IPS_IDLE = 0, FW_IPS_RUN = 1, FW_IPS_STOPPING = 2, FW_IPS_DONE = 3, FW_IPS_ABORTED = 4, FW_IPS_STOPPED = 5 };
 enum { FW_SRES_OK = 0, FW_SRES_RUNNING_CMD = 1, FW_SRES_REFUSED = 0x10, FW_SRES_LOCKED = 0x11, FW_SRES_AXIS_RUNNING = 0x12 };
 /* axis_state */
 enum { FW_AS_SERVO_OFF = 0, FW_AS_IDLE = 1, FW_AS_POSITIONING = 2, FW_AS_JOG = 3, FW_AS_HOME = 4, FW_AS_DECEL_STOP = 5,
@@ -93,6 +100,8 @@ typedef struct {
     uint8_t  mac[6];
     uint32_t unlock_deadline_ms; bool unlock_active;
     fw_hist_t hist[FW_HIST_N]; uint16_t hist_count;
+    uint16_t ip[FW_IP_WORDS];           /* D-089: interpolation parameters 0x0150.. (RAM only, not saved) */
+    uint16_t ip_state, ip_result;       /* 0x015E / 0x015F */
     fw_dev_ops_t ops;
 } fw_dev_t;
 

@@ -28,6 +28,11 @@ typedef struct {
     bool      test_active, test_forward;  /* TEST_POS/NEG hold-type run (FR-032) */
     uint32_t  test_last_ms;
     uint16_t  sticky_alarm, init_alarm;  /* alarm_code shown = 0x0101 while the STOP blocks, else sticky_alarm */
+    bool      stream;                    /* D-089: running move is driven by the interpolator (no profile updates) */
+    bool      ip_hold;                   /* D-089: interpolation session: servo ON, BUSY and commands refused between parks */
+    int32_t   ip_target;                 /* D-089: session end point (target_position_act) */
+    uint32_t  ip_moved;                  /* D-089: pulses emitted in the session's finished stream segments */
+    bool      dir_known, dir_lvl;        /* review M-05: DIR pin level last driven (skip the setup wait if unchanged) */
 } fw_axis_t;
 
 void    fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz);
@@ -36,6 +41,15 @@ void    fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz);
 uint8_t fw_axis_command_gated(fw_axis_t *a, uint16_t cmd, bool start_blocked);
 uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd);        /* axis_command semantic, returns/stores cmd_result */
 uint8_t fw_axis_start_check(const fw_axis_t *a, bool absolute);   /* D-088: START_ABS/REL pre-check, no side effect */
+uint8_t fw_axis_ready_check(const fw_axis_t *a);            /* D-089: same without the operand (target) checks */
+/* D-089 interpolator stream: run at hz in a direction (start, retune, or park + restart on a direction change),
+ * park (stop pulses, keep the position, servo stays ON while ip_hold), current signed position */
+uint8_t fw_axis_stream_run(fw_axis_t *a, bool forward, uint32_t hz);
+void    fw_axis_stream_park(fw_axis_t *a);
+/* on: session start (target = end point); off: final bookkeeping + servo rule. While on, every axis command except
+ * STOP / QUICK_STOP is refused (review C-01: a parked axis looks idle) */
+void    fw_axis_stream_session(fw_axis_t *a, bool on, uint16_t end_cause, int32_t target);
+int32_t fw_axis_cur_pos(const fw_axis_t *a);
 uint8_t fw_axis_start_legacy(fw_axis_t *a);                 /* coil 0: relative move from the legacy values (axis X) */
 uint8_t fw_axis_start_physical(fw_axis_t *a);               /* START edge: X = legacy start, Y = START_REL from target_position */
 void    fw_axis_legacy_reset(fw_axis_t *a);                 /* coil 2 extra: current value, result, fault := 0 */

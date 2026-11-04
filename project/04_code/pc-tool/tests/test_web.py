@@ -123,6 +123,110 @@ def test_sync_rel_zero_target_refused(web):
     assert not r["ok"] and "X축 거부: 값 범위" in r["text"]
 
 
+LINE = {"mode": 1, "abs": 0, "end_x": 3000, "end_y": 4000, "feed": 10000, "accel_ms": 100, "decel_ms": 100}
+ARC_CCW = {"mode": 3, "abs": 0, "end_x": 2000, "end_y": 2000, "center_i": 0, "center_j": 2000, "feed": 5000,
+           "accel_ms": 100, "decel_ms": 100}          # quarter circle r = 2000 from (0,0) to (2000,2000), CCW
+
+
+def test_interp_math_quarter_circle():
+    from svtool.interp import Path, ARC_CCW as CCW, ARC_CW as CW
+    p = Path(CCW, 2000, 2000, 0, 2000, 5000, 100, 100)
+    assert abs(p.len - 3141.59) < 0.1 and abs(p.r - 2000) < 1e-9            # (pi/2) * 2000
+    x, y = p.xy(p.len / 2)
+    assert abs(x - 2000 * 0.70711) < 0.1 and abs(y - (2000 - 2000 * 0.70711)) < 0.1   # passes below the centre (CCW)
+    q = Path(CW, 2000, 2000, 0, 2000, 5000, 100, 100)
+    assert abs(q.len - 3 * 3141.59) < 0.5                                   # CW goes the long way (270 degrees)
+    full = Path(CCW, 0, 0, 1000, 0, 5000, 100, 100)
+    assert abs(full.len - 6283.19) < 0.1                                    # end == start: full circle
+
+
+def test_interp_preview_and_geometry_error(web):
+    _, r = post(web + "/api/interp/preview", LINE)
+    assert r["ok"] and r["length"] == 5000.0 and r["end"] == [3000, 4000]
+    assert r["axis_peak"] == [6000, 8000] and r["points"][-1][1:] == [3000, 4000]
+    _, r = post(web + "/api/interp/preview", dict(ARC_CCW, end_x=2500))
+    assert not r["ok"] and "원 위에" in r["text"]
+
+
+def test_interp_linear_runs_to_exact_end(web, sim):
+    _, r = post(web + "/api/interp/start", LINE)
+    assert r["ok"], r
+    sim.clock.advance(0.3)
+    s = state(web)
+    assert s["ip"]["state"] == 1
+    x, y = s["axes"][0]["position"], s["axes"][1]["position"]
+    assert x > 0 and abs(y * 3 - x * 4) <= 8                                 # on the line y = 4/3 x
+    sim.clock.advance(2.0)
+    s = state(web)
+    assert s["ip"]["state"] == 3 and [a["position"] for a in s["axes"]] == [3000, 4000]
+
+
+def test_interp_arc_passes_the_circle(web, sim):
+    _, r = post(web + "/api/interp/start", ARC_CCW)
+    assert r["ok"], r
+    for _ in range(5):
+        sim.clock.advance(0.1)
+        s = state(web)
+        x, y = s["axes"][0]["position"], s["axes"][1]["position"]
+        assert abs(((x - 0) ** 2 + (y - 2000) ** 2) ** 0.5 - 2000) <= 2      # integer rounding only
+    sim.clock.advance(2.0)
+    assert [a["position"] for a in state(web)["axes"]] == [2000, 2000]
+
+
+def test_interp_stop_decelerates_on_the_path(web, sim):
+    post(web + "/api/interp/start", dict(LINE, end_x=300000, end_y=400000))
+    sim.clock.advance(1.0)
+    _, r = post(web + "/api/sync", {"cmd": "STOP"})
+    assert r["ok"]
+    sim.clock.advance(1.0)
+    s = state(web)
+    x, y = s["axes"][0]["position"], s["axes"][1]["position"]
+    assert s["ip"]["state"] == 5 and 0 < x < 300000 and abs(y * 3 - x * 4) <= 8
+
+
+def test_interp_refused_cases(web, sim):
+    _, r = post(web + "/api/interp/start", dict(LINE, feed=2000000))
+    assert not r["ok"] and "범위" in r["text"]                                # register range
+    _, r = post(web + "/api/interp/start", dict(LINE, feed=1000000))
+    assert not r["ok"] and "값 범위" in r["text"]                             # axis max_speed 100000 < 800000
+    post(web + "/api/interp/start", LINE)
+    _, r = post(web + "/api/interp/start", LINE)
+    assert not r["ok"]                                                        # already running
+
+
+def test_interp_refuses_axis_commands_while_running(web, sim):
+    post(web + "/api/interp/start", dict(LINE, end_x=300000, end_y=400000))
+    sim.clock.advance(0.2)
+    _, r = post(web + "/api/axis", {"axis": 1, "cmd": "SET_POSITION", "operands": {"target": 0}})
+    assert not r["ok"] and "운전 중" in r["text"]                              # review C-01
+    assert state(web)["ip"]["state"] == 1
+
+
+def test_interp_arc_end_off_circle_ends_on_programmed_point(web, sim):
+    from svtool.interp import Path, ARC_CCW as CCW
+    p = Path(CCW, 2001, 2000, 0, 2000, 5000, 100, 100)                       # 1 pulse off the circle: accepted
+    assert p.xy(p.len) == pytest.approx((2001, 2000), abs=1e-6)             # path itself ends on the programmed point
+    _, r = post(web + "/api/interp/start", dict(ARC_CCW, end_x=2003))       # 3 pulses off: refused
+    assert not r["ok"]
+
+
+def test_sync_and_interp_refuse_latched_stop(web, sim):
+    sim.set_stop_input(True)
+    sim.set_stop_input(False)                                               # input released, latch kept (D-058)
+    _, r = post(web + "/api/interp/start", LINE)
+    assert not r["ok"] and "비상정지" in r["text"]                            # review M-01
+    _, r = post(web + "/api/sync", {"cmd": "START", "mode": "REL", "operands": {"1": {"target": 10}, "2": {"target": 10}}})
+    assert not r["ok"] and "비상정지" in r["text"]
+
+
+def test_interp_aborts_on_stop_input(web, sim):
+    post(web + "/api/interp/start", dict(LINE, end_x=300000, end_y=400000))
+    sim.clock.advance(0.5)
+    sim.set_stop_input(True)
+    s = state(web)
+    assert s["ip"]["state"] == 4 and s["ip"]["result"] == 0x20
+
+
 def test_operand_range_checked(web):
     _, r = post(web + "/api/axis", {"axis": 1, "cmd": "START_REL", "operands": {"target": 1, "speed": 10, "accel_ms": 5}})
     assert not r["ok"] and "accel_ms" in r["text"]

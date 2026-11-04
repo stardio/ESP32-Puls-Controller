@@ -84,6 +84,17 @@ td input { max-width: 180px; }
 .wire ul { padding: 0; margin: 0; }
 .ok-t { color: var(--ok); font-weight: 700; } .ng-t { color: var(--bad); font-weight: 700; }
 .note { color: var(--muted); font-size: 12px; }
+.ipgrid { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.ipview { min-width: 0; }
+#ipCanvas { width: 100%; height: 520px; display: block; background: var(--readout); border-radius: 6px; cursor: grab; touch-action: none; }
+.ipview button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.legend { font-size: 12px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+.legend i { display: inline-block; width: 18px; border-top: 2px solid; margin-right: 4px; vertical-align: middle; }
+.legend i.dot { width: 8px; height: 8px; border: none; border-radius: 50%; background: #7fe0c4; }
+table.kv td { padding: 3px 6px; font-size: 12px; }
+table.kv td:first-child { color: var(--muted); width: 45%; }
+@media (max-width: 860px) { .ipgrid { grid-template-columns: 1fr; } #ipCanvas { height: 380px; } }
 @media (max-width: 520px) { .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .axes { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -103,6 +114,7 @@ td input { max-width: 180px; }
 
 <nav>
   <button class="active" data-tab="run">운전</button>
+  <button data-tab="interp">보간 (3D)</button>
   <button data-tab="params">파라미터</button>
   <button data-tab="wiring">배선 점검</button>
   <button data-tab="backup">백업</button>
@@ -122,6 +134,49 @@ td input { max-width: 180px; }
       <p class="note" style="margin:6px 0 0">한 축이라도 시작할 수 없으면 두 축 모두 시작하지 않습니다. 외부 입력: DI3(GPIO18) = 동시 START(상대), DI4(GPIO17) = 동시 STOP(감속). 동시 STOP은 안전 비상정지가 아닙니다.</p>
     </fieldset>
     <div class="axes" id="axes"></div>
+  </section>
+
+  <section class="tab" id="tab-interp">
+    <div class="ipgrid">
+      <div class="ipform">
+        <fieldset><legend>보간 경로 (시작점 = 현재 위치)</legend>
+          <div class="grid2">
+            <label class="f">방식<select id="ipMode"><option value="1">직선 보간</option><option value="3">원호 CCW (반시계)</option><option value="2">원호 CW (시계)</option></select></label>
+            <label class="f">끝점 좌표<select id="ipAbs"><option value="0">상대 (시작점 기준)</option><option value="1">절대</option></select></label>
+            <label class="f">끝점 X pulse<input id="ipEx" type="number" step="1" value="20000"></label>
+            <label class="f">끝점 Y pulse<input id="ipEy" type="number" step="1" value="10000"></label>
+            <label class="f ipArc">중심 I (X, 시작점 기준)<input id="ipCi" type="number" step="1" value="10000"></label>
+            <label class="f ipArc">중심 J (Y, 시작점 기준)<input id="ipCj" type="number" step="1" value="0"></label>
+          </div>
+          <p class="note ipArc" style="margin:6px 0 0">원호: 끝점은 중심에서 시작점까지의 반지름 위에 있어야 합니다. 끝점 = 시작점(상대 0, 0)이면 한 바퀴.</p>
+        </fieldset>
+        <fieldset style="margin-top:8px"><legend>이송</legend>
+          <div class="grid2">
+            <label class="f">이송 속도 F pps (경로 방향)<input id="ipFeed" type="number" min="1" step="1" value="10000"></label>
+            <label class="f">가속 ms<input id="ipAcc" type="number" min="10" max="60000" value="200"></label>
+            <label class="f">감속 ms<input id="ipDec" type="number" min="10" max="60000" value="200"></label>
+          </div>
+        </fieldset>
+        <div class="row" style="margin-top:8px">
+          <button id="ipPreview">미리보기</button>
+          <button class="primary" id="ipStart">▶ 보간 START</button>
+          <button class="danger" id="ipStop">■ 정지 (경로 감속)</button>
+          <button id="ipClear">궤적 지우기</button>
+        </div>
+        <div class="result" id="ipRes"></div>
+        <table class="kv" id="ipInfo"></table>
+      </div>
+      <div class="ipview">
+        <div class="row" style="margin-bottom:6px">
+          <span class="note">보기</span>
+          <button data-view="3d" class="active">3D</button><button data-view="xy">위 (X-Y)</button><button data-view="xt">정면 (X-시간)</button>
+          <span class="spacer"></span>
+          <span class="legend"><i style="border-color:#5b8def; border-style:dashed"></i>미리보기 <i style="border-color:#ff8a3d"></i>실제 궤적 <i class="dot"></i>현재 위치</span>
+        </div>
+        <canvas id="ipCanvas"></canvas>
+        <p class="note" style="margin:4px 0 0">세로축 = 시간(초). 드래그로 회전, 휠로 확대·축소. 실제 궤적은 운전 중 약 20회/초로 읽은 위치입니다.</p>
+      </div>
+    </div>
   </section>
 
   <section class="tab" id="tab-params">
@@ -201,6 +256,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
   if (b.dataset.tab === "params" && !Object.keys(pendingEdits()).length) loadParams();
   if (b.dataset.tab === "help") loadHelp();
+  if (b.dataset.tab === "interp") ipDraw();
 });
 
 // ---------- help ----------
@@ -343,6 +399,8 @@ function render(s) {
     $("[data-k=foot]", el).textContent = `마지막 정지 원인: ${a.stop_cause} · 직전 명령 결과: ${a.cmd_result_text} · 완료 누계 ${fmt(a.move_count)}회 · 최고 ${fmt(a.max_rpm)} rpm`;
   }
   renderWiring(s.wiring);
+  ipRecord(s);
+  ipDraw();
 }
 
 function renderWiring(w) {
@@ -367,7 +425,7 @@ async function poll() {
       const b = $("#bnErr"); b.textContent = `장치와 통신할 수 없습니다: ${e.message}. 자동으로 다시 시도합니다.`; b.classList.add("show");
     } finally { pending = false; }
   }
-  setTimeout(poll, 250);
+  setTimeout(poll, IP.rec ? 50 : 250);           /* faster while an interpolation is being recorded */
 }
 
 // ---------- X/Y simultaneous (D-088) ----------
@@ -387,6 +445,132 @@ async function syncSend(cmd) {
 }
 $("#syncStart").onclick = () => syncSend("START");
 $("#syncStop").onclick = () => syncSend("STOP");
+
+// ---------- X/Y interpolation + 3D graph (D-089) ----------
+const IP = { preview: null, trace: [], rec: false, t0: null, view: "3d", yaw: -0.65, pitch: 0.5, zoom: 1, drag: null };
+const ipNum = id => +$(id).value;
+function ipParams() {
+  return { mode: ipNum("#ipMode"), abs: ipNum("#ipAbs"), end_x: ipNum("#ipEx"), end_y: ipNum("#ipEy"),
+    center_i: ipNum("#ipCi"), center_j: ipNum("#ipCj"), feed: ipNum("#ipFeed"), accel_ms: ipNum("#ipAcc"), decel_ms: ipNum("#ipDec") };
+}
+function ipArcToggle() { document.querySelectorAll(".ipArc").forEach(e => e.style.display = $("#ipMode").value === "1" ? "none" : ""); }
+$("#ipMode").onchange = ipArcToggle; ipArcToggle();
+function ipMsg(ok, text) { const o = $("#ipRes"); o.className = "result " + (ok ? "ok" : "bad"); o.textContent = text; }
+
+async function ipDoPreview() {
+  const r = await api("/api/interp/preview", ipParams());
+  if (!r.ok) { ipMsg(false, `미리보기: ${r.text}`); IP.preview = null; ipDraw(); return null; }
+  IP.preview = r;
+  const rows = [["시작 → 끝 (pulse)", `(${fmt(r.start[0])}, ${fmt(r.start[1])}) → (${fmt(r.end[0])}, ${fmt(r.end[1])})`],
+    ["경로 길이", `${fmt(r.length)} pulse`], ["예상 시간", `${r.time.toFixed(3)} s`], ["최고 이송 속도", `${fmt(r.peak_feed)} pps`],
+    ["축 최고 속도 X / Y", `${fmt(r.axis_peak[0])} / ${fmt(r.axis_peak[1])} pps`]];
+  if (r.radius) rows.push(["반지름 / 회전각", `${fmt(r.radius)} pulse / ${r.sweep_deg}°`]);
+  $("#ipInfo").innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join("");
+  ipMsg(true, "미리보기 완료");
+  ipDraw();
+  return r;
+}
+$("#ipPreview").onclick = ipDoPreview;
+$("#ipStart").onclick = async () => {
+  if (!await ipDoPreview()) return;
+  const r = await api("/api/interp/start", ipParams());
+  ipMsg(r.ok, `보간 START: ${r.text}`);
+  if (r.ok) { IP.trace = []; IP.t0 = r.t_ms; IP.rec = true; }
+};
+$("#ipStop").onclick = async () => { const r = await api("/api/sync", { cmd: "STOP" }); ipMsg(r.ok, `정지: ${r.text}`); };
+$("#ipClear").onclick = () => { IP.trace = []; ipDraw(); };
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
+  IP.view = b.dataset.view;
+  document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("active", x === b));
+  ipDraw();
+});
+
+/* called on every state poll: records the live trace while an interpolation runs (server clock t_ms) */
+function ipRecord(s) {
+  if (!IP.rec || !s.axes || s.axes.length < 2 || !s.ip) return;
+  const t = (s.t_ms - IP.t0) / 1000;
+  if (t >= 0) IP.trace.push([t, s.axes[0].position, s.axes[1].position]);
+  if (s.ip.state !== 1 && s.ip.state !== 2 && t > 0.05) {
+    IP.rec = false;
+    ipMsg(s.ip.state === 3, `보간 ${s.ip.state_text} — ${s.ip.result_text}`);
+  }
+}
+
+/* --- 3D drawing: X/Y in pulses (same scale), vertical = time; orthographic camera with yaw/pitch --- */
+const cv = $("#ipCanvas");
+function ipCam() {
+  if (IP.view === "xy") return { yaw: 0, pitch: Math.PI / 2 };
+  if (IP.view === "xt") return { yaw: 0, pitch: 0 };
+  return { yaw: IP.yaw, pitch: IP.pitch };
+}
+function ipDraw() {
+  if (!$("#tab-interp").classList.contains("active")) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const pv = IP.preview ? IP.preview.points : [], tr = IP.trace;
+  const cur = state && state.axes && state.axes.length >= 2 ? [state.axes[0].position, state.axes[1].position] : null;
+  const all = pv.concat(tr);
+  if (!all.length && !cur) { g.fillStyle = "#7c8d96"; g.font = "13px sans-serif"; g.fillText("미리보기를 누르면 경로가 표시됩니다", 16, 24); return; }
+  const xs = all.map(p => p[1]).concat(cur ? [cur[0]] : []), ys = all.map(p => p[2]).concat(cur ? [cur[1]] : []);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, R = Math.max(x1 - x0, y1 - y0, 2) / 2;
+  const tmax = Math.max(IP.preview ? IP.preview.time : 0, tr.length ? tr[tr.length - 1][0] : 0, 0.001);
+  const { yaw, pitch } = ipCam(), cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const S = Math.min(W, H) * 0.36 * IP.zoom;
+  const P = (x, y, t) => {                       /* world -> screen */
+    const X = (x - cx) / R, Y = (y - cy) / R, Z = t / tmax * 1.6 - 0.8;
+    const rx = X * cyw - Y * syw, ry = X * syw + Y * cyw;
+    return [W / 2 + rx * S, H / 2 - (Z * cp + ry * sp) * S];
+  };
+  const line = (pts, color, width, dash) => {
+    if (pts.length < 2) return;
+    g.strokeStyle = color; g.lineWidth = width; g.setLineDash(dash || []);
+    g.beginPath(); pts.forEach((p, i) => { const q = P(p[1], p[2], p[0]); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.stroke();
+    g.setLineDash([]);
+  };
+  /* floor grid (t = 0) and labels */
+  g.font = "11px ui-monospace, Consolas, monospace"; g.lineWidth = 1;
+  for (let i = 0; i <= 10; ++i) {
+    const k = -1 + i / 5, gx = cx + k * R, gy = cy + k * R;
+    g.strokeStyle = i === 5 ? "rgba(127,224,196,.25)" : "rgba(127,141,150,.18)";
+    let a = P(gx, cy - R, 0), b = P(gx, cy + R, 0); g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke();
+    a = P(cx - R, gy, 0); b = P(cx + R, gy, 0); g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke();
+  }
+  const lab = (txt, x, y, t, c) => { const q = P(x, y, t); g.fillStyle = c; g.fillText(txt, q[0] + 4, q[1] - 4); };
+  lab(`X ${fmt(Math.round(cx + R))}`, cx + R, cy - R, 0, "#ff9b9b"); lab(`${fmt(Math.round(cx - R))}`, cx - R, cy - R, 0, "#ff9b9b");
+  lab(`Y ${fmt(Math.round(cy + R))}`, cx - R, cy + R, 0, "#9bffb0");
+  if (IP.view !== "xy") {                        /* time axis at the (x0, y0) corner */
+    g.strokeStyle = "rgba(155,190,255,.6)"; const a = P(cx - R, cy - R, 0), b = P(cx - R, cy - R, tmax);
+    g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke();
+    lab(`t ${tmax.toFixed(2)} s`, cx - R, cy - R, tmax, "#9bbeff"); lab("0 s", cx - R, cy - R, 0, "#9bbeff");
+  }
+  /* floor shadows (X-Y path) then the 3D paths */
+  if (IP.view === "3d") {
+    line(pv.map(p => [0, p[1], p[2]]), "rgba(91,141,239,.35)", 1);
+    line(tr.map(p => [0, p[1], p[2]]), "rgba(255,138,61,.35)", 1);
+  }
+  line(pv, "#5b8def", 2, [6, 4]);
+  line(tr, "#ff8a3d", 2.5);
+  const dot = (x, y, t, c, r) => { const q = P(x, y, t); g.fillStyle = c; g.beginPath(); g.arc(q[0], q[1], r, 0, 7); g.fill(); };
+  if (IP.preview) { dot(IP.preview.start[0], IP.preview.start[1], 0, "#3ddc84", 4); dot(IP.preview.end[0], IP.preview.end[1], IP.preview.time, "#5b8def", 4); }
+  if (tr.length) { const l = tr[tr.length - 1]; dot(l[1], l[2], l[0], "#7fe0c4", 5); }
+  else if (cur) dot(cur[0], cur[1], 0, "#7fe0c4", 5);
+  if (cur) { g.fillStyle = "#cfd8dc"; g.fillText(`현재 X ${fmt(cur[0])}  Y ${fmt(cur[1])}`, 12, H - 12); }
+}
+cv.addEventListener("pointerdown", e => { IP.drag = [e.clientX, e.clientY, IP.yaw, IP.pitch]; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if (!IP.drag) return;
+  if (IP.view !== "3d") { IP.view = "3d"; document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === "3d")); }
+  IP.yaw = IP.drag[2] + (e.clientX - IP.drag[0]) * 0.01;
+  IP.pitch = Math.max(-0.2, Math.min(Math.PI / 2, IP.drag[3] + (e.clientY - IP.drag[1]) * 0.01));
+  ipDraw();
+});
+["pointerup", "pointercancel"].forEach(ev => cv.addEventListener(ev, () => { IP.drag = null; }));
+cv.addEventListener("wheel", e => { e.preventDefault(); IP.zoom = Math.max(0.3, Math.min(5, IP.zoom * (e.deltaY < 0 ? 1.1 : 0.9))); ipDraw(); }, { passive: false });
+window.addEventListener("resize", ipDraw);
 
 // ---------- global buttons ----------
 $("#stopAll").onclick = async () => {

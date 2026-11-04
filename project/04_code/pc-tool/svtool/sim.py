@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-from . import regmap as R, units
+from . import interp as IP, regmap as R, units
 
 HOME_SECONDS = 1.0
 TEST_HOLD_S = 0.5
@@ -90,6 +90,12 @@ class Sim:
         self._set(R.AXIS_COUNT, axes)
         self._setw(R.FW_VERSION, 2, FW_VERSION_SIM)
         self._set(R.REGMAP_VER, R.REGMAP_VERSION)
+        for f in R.INTERP:                      # D-089: RAM-only interpolation block defaults
+            if f.rw and f.default:
+                for i, w in enumerate(R.encode(f.kind, f.default)):
+                    self.regs[f.addr + i] = w
+        self.ip = None                          # active interpolation: dict(path, base, fin, t0)
+        self.ip_state = self.ip_result = 0
         self._refresh()
 
     # ---- low level -------------------------------------------------------
@@ -166,7 +172,80 @@ class Sim:
                 t += c
                 for ax in self.axes:
                     self._step(ax, c, t)
+            self._ip_step(now)
             self._refresh()
+
+    # ---- D-089 interpolation (same path maths as the firmware, svtool/interp.py) --------------------------------
+    def _ip_start(self):
+        if self.axes_n < 2:
+            self.ip_result = IP.E_RANGE
+            return R.RESULT_REFUSED
+        absolute = self._getn(0x0151) != 0
+        for ax in self.axes:
+            r = self._start_check(ax, False)
+            if r == R.CR_RANGE:                 # operand target 0 is irrelevant here
+                r = R.CR_OK
+            if r == R.CR_OK and absolute and ax.posinv and self.p(ax.n, 0x128):
+                r = R.CR_POSINV
+            if r != R.CR_OK:
+                ax.cmd_result = self.ip_result = r
+                return R.RESULT_REFUSED
+        base = [int(round(ax.pos)) for ax in self.axes]
+        ex, ey = self._getn(0x0152), self._getn(0x0154)
+        dx, dy = (ex - base[0], ey - base[1]) if absolute else (ex, ey)
+        try:
+            path = IP.Path(self._getn(0x0150), dx, dy, self._getn(0x0156), self._getn(0x0158), self._getn(0x015A),
+                           self._getn(0x015C), self._getn(0x015D))
+        except IP.PlanError:
+            self.ip_result = IP.E_RANGE
+            return R.RESULT_REFUSED
+        vx, vy = path.axis_peak()
+        if vx > min(units.MAX_PPS, self.p(1, 0x104)) or vy > min(units.MAX_PPS, self.p(2, 0x104)):
+            self.ip_result = IP.E_RANGE
+            return R.RESULT_REFUSED
+        for ax in self.axes:
+            ax.mode, ax.start_pos, ax.done, ax.sw = "interp", ax.pos, False, 0
+        self.ip = {"path": path, "base": base, "fin": [base[0] + dx, base[1] + dy], "t0": self.clock()}
+        self.ip_state, self.ip_result = 1, 0
+        return R.RESULT_OK
+
+    def _ip_stop(self, quick):
+        if not self.ip:
+            return
+        if quick:
+            self._ip_finish(5, 3, False)
+            return
+        ip = self.ip
+        ip["path"].stop(self.clock() - ip["t0"])
+        x, y = ip["path"].xy(ip["path"].end_s())
+        ip["fin"] = [ip["base"][0] + int(round(x)), ip["base"][1] + int(round(y))]
+        self.ip_state = 2
+
+    def _ip_finish(self, state, cause, done):
+        for ax in self.axes:
+            if ax.mode == "interp":
+                self._finish(ax, cause, done)
+        self.ip, self.ip_state = None, state
+
+    def _ip_step(self, now):
+        ip = self.ip
+        if not ip:
+            return
+        if any(ax.mode != "interp" for ax in self.axes):       # STOP input / alarm finished an axis
+            self._ip_finish(4, 3, False)
+            self.ip_result = IP.E_ABORT
+            return
+        path, t = ip["path"], now - ip["t0"]
+        if t >= path.T:
+            for ax, p in zip(self.axes, ip["fin"]):
+                ax.pos = float(p)
+            stopped = self.ip_state == 2
+            self._ip_finish(5 if stopped else 3, 2 if stopped else 1, not stopped)
+            return
+        s, v = path.s(t)
+        x, y = path.xy(s)
+        for ax, b, d in zip(self.axes, ip["base"], (x, y)):
+            ax.pos = b + d
 
     def _finish(self, ax, cause, done):
         ax.mode = "idle"
@@ -181,7 +260,7 @@ class Sim:
         ax.pulses_done = int(abs(ax.pos - ax.start_pos))
 
     def _begin_stop(self, ax, cause):
-        if ax.mode == "stopping" or not ax.running:
+        if ax.mode in ("stopping", "interp") or not ax.running:     # interp: stopped along the path by _ip_stop
             return
         decel = max(1, self.p(ax.n, R.A_DECEL)) / 1000.0
         ax.mode = "stopping"
@@ -251,7 +330,7 @@ class Sim:
                 state = 7
             elif ax.alarm:
                 state = 6
-            elif ax.mode == "move":
+            elif ax.mode in ("move", "interp"):
                 state = 2
             elif ax.mode in ("jog", "test"):
                 state = 3
@@ -317,6 +396,8 @@ class Sim:
         self._set(R.TCP_CLIENTS, self.clients)
         self._setw(R.UPTIME_S, 2, int(self.uptime))
         self._set(R.HEARTBEAT, int(self.uptime * 10))
+        self._set(R.IP_STATE, self.ip_state)
+        self._set(R.IP_RESULT, self.ip_result)
         self._set(R.RESET_REASON, self.reset_reason)
         self._set(R.COMM_MODE_ACTIVE, 0)
         self._set(R.SYS_CMD_RESULT, self.sys_result)
@@ -527,17 +608,26 @@ class Sim:
         elif cmd == R.CMD_CLEAR_HIST:
             self.history = []
         elif cmd == R.CMD_STOP_ALL:
+            self._ip_stop(False)
             for ax in self.axes:
                 self._begin_stop(ax, 2)
         elif cmd in (R.CMD_START_ALL_REL, R.CMD_START_ALL_ABS):
+            if self.ip:
+                return R.RESULT_RUNNING
             return self._start_all(cmd == R.CMD_START_ALL_ABS)
+        elif cmd == R.CMD_INTERP_START:
+            if self.ip:
+                self.ip_result = R.CR_RUNNING
+                return R.RESULT_RUNNING
+            return self._ip_start()
         else:
             return R.RESULT_REFUSED
         return R.RESULT_OK
 
     def _start_check(self, ax, absolute):
-        """Side-effect-free part of the start checks (firmware fw_axis_start_check, D-088)."""
-        if self.stop_active:
+        """Side-effect-free part of the start checks (firmware fw_axis_start_check, D-088). A latched STOP refuses too:
+        simultaneous / interpolation starts never release the latch (review M-01)."""
+        if self.stop_active or self.latch:
             return R.CR_ESTOP
         if ax.alarm:
             return R.CR_ALARM
@@ -610,6 +700,9 @@ class Sim:
 
     def _axis_cmd_inner(self, ax, cmd):
         n = ax.n
+        if self.ip and cmd in (3, 12):         # D-089: STOP / QUICK_STOP stop the path, not one axis
+            self._ip_stop(cmd == 12)
+            return R.CR_OK
         starters = (1, 2, 4, 8, 9, 13, 14, 15, 16, 17)
         if cmd in starters:
             if self.stop_active:

@@ -1,5 +1,18 @@
 #include "fw_regmap.h"
 #include <string.h>
+#include "fw_interp.h"
+
+/* D-089 interpolation block items: offset, words (for the 32-bit half-write rule) */
+static const uint8_t IPI[][2] = {{FW_IPO_MODE, 1}, {FW_IPO_ABS, 1}, {FW_IPO_END_X, 2}, {FW_IPO_END_Y, 2}, {FW_IPO_CTR_I, 2},
+                                 {FW_IPO_CTR_J, 2}, {FW_IPO_FEED, 2}, {FW_IPO_ACCEL, 1}, {FW_IPO_DECEL, 1}};
+
+/* range check of a candidate parameter block: true = valid */
+static bool ip_valid(const uint16_t *ip)
+{
+    const uint32_t feed = fw_w32(ip, FW_IPO_FEED);
+    return ip[FW_IPO_MODE] <= FW_IP_ARC_CCW && ip[FW_IPO_ABS] <= 1 && feed >= 1u && feed <= FW_SPEED_MAX_HZ &&
+           ip[FW_IPO_ACCEL] >= 10 && ip[FW_IPO_ACCEL] <= 60000 && ip[FW_IPO_DECEL] >= 10 && ip[FW_IPO_DECEL] <= 60000;
+}
 
 /* ------------------------------------------------------------------ item tables */
 enum {
@@ -148,6 +161,9 @@ void fw_dev_init(fw_dev_t *d, uint8_t axis_count, bool model_rtu)
     d->axis_count = axis_count > FW_MAX_AXES ? FW_MAX_AXES : (axis_count ? axis_count : 1);
     d->model_rtu = model_rtu;
     fw_cfg_defaults_model(&d->cfg, model_rtu);      /* D-059 */
+    d->ip[FW_IPO_MODE] = FW_IP_LINE;                 /* D-089 defaults: linear, relative, 10 kpps, 100 ms */
+    fw_set32(d->ip, FW_IPO_FEED, 10000u);
+    d->ip[FW_IPO_ACCEL] = 100; d->ip[FW_IPO_DECEL] = 100;
 }
 
 /* ------------------------------------------------------------------ reads */
@@ -251,6 +267,9 @@ int fw_reg_read(const fw_dev_t *d, uint16_t addr, uint16_t *out)
     case R_LEGACY: return read_legacy(d, addr, out);
     case R_SYSBLK: case R_CMDBLK:
         if (l.r == R_CMDBLK && addr >= 0x0110 && addr < 0x0110 + FW_SYS_WORDS) { *out = d->cfg.sys[addr - 0x0110]; return 0; }
+        if (l.r == R_CMDBLK && addr >= FW_IP_BASE && addr < FW_IP_BASE + FW_IP_WORDS) { *out = d->ip[addr - FW_IP_BASE]; return 0; }
+        if (addr == FW_IP_BASE + 0x0E) { *out = d->ip_state; return 0; }       /* D-089 */
+        if (addr == FW_IP_BASE + 0x0F) { *out = d->ip_result; return 0; }
         it = find_itm(SYSI, NSYS, addr);
         *out = it ? (uint16_t)(item_val(d, -1, it->id) >> (16 * (addr - it->off))) : 0;
         return 0;
@@ -289,7 +308,7 @@ int fw_reg_read(const fw_dev_t *d, uint16_t addr, uint16_t *out)
 }
 
 /* ------------------------------------------------------------------ writes */
-typedef enum { W_UNDEF = 0, W_LEG, W_SEG, W_AXCMD, W_SYSCMD, W_UNLOCK, W_USERDO, W_NETAPPLY, W_SETUP, W_PT } wkind_t;
+typedef enum { W_UNDEF = 0, W_LEG, W_SEG, W_AXCMD, W_SYSCMD, W_UNLOCK, W_USERDO, W_NETAPPLY, W_SETUP, W_PT, W_IP } wkind_t;
 typedef struct {
     wkind_t k;
     int axis;
@@ -310,6 +329,13 @@ static wt_t wclassify(const fw_dev_t *d, unsigned a)
         if (a <= 3 || (a >= 20 && a <= 23)) { t.k = W_LEG; }      /* each word on its own (legacy half writes are legal) */
         return t;
     case R_CMDBLK:
+        if (a >= FW_IP_BASE && a < FW_IP_BASE + FW_IP_WORDS) {             /* D-089; 0x015E/F (state, result): read-only */
+            for (unsigned i = 0; i < sizeof IPI / sizeof IPI[0]; ++i)
+                if (a - FW_IP_BASE >= IPI[i][0] && a - FW_IP_BASE < (unsigned)IPI[i][0] + IPI[i][1]) {
+                    t.k = W_IP; t.segoff = a - FW_IP_BASE; t.istart = FW_IP_BASE + IPI[i][0]; t.iwords = IPI[i][1];
+                }
+            return t;
+        }
         if (a >= 0x0110 && a < 0x0110 + FW_SYS_WORDS) {
             e = fw_seg_find(&FW_SEG_SYS, a - 0x0110);
             if (e) { t.k = W_SEG; t.seg = &FW_SEG_SYS; t.segid = 2; t.segoff = a - 0x0110; t.istart = 0x0110u + e->off; t.iwords = e->words; }
@@ -370,6 +396,8 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
     uint16_t syscmd = 0; bool syscmd_v = false;
     bool unlock_v = false, userdo_v = false, netapply_v = false; uint16_t userdo = 0, unlockval = 0;
     uint8_t t_pt[FW_MAX_AXES] = {0};
+    uint16_t ipc[FW_IP_WORDS]; bool t_ip = false;        /* D-089 candidate interpolation block */
+    memcpy(ipc, d->ip, sizeof(ipc));
 
     for (unsigned a = addr; a < addr + count;) {
         const wt_t t = wclassify(d, a);
@@ -410,6 +438,7 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
             memcpy(&cand.pt[t.axis][t.segoff][t.segid], &v[a - addr], t.iwords * sizeof(uint16_t));
             t_pt[t.axis] = (uint8_t)(t_pt[t.axis] | (1u << t.segoff));
             break;
+        case W_IP: memcpy(&ipc[t.segoff], &v[a - addr], t.iwords * sizeof(uint16_t)); t_ip = true; break;
         case W_UNLOCK: if (w0 != FW_UNLOCK_KEY) return 3; unlock_v = true; unlockval = w0; break;
         case W_USERDO: if (w0 & ~3u) return 3; userdo = w0; userdo_v = true; break;
         case W_NETAPPLY: if (w0 != 1) return 3; netapply_v = true; break;
@@ -431,6 +460,7 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
             if ((t_pt[a] >> i) & 1u && !fw_point_validate(cand.pt[a][i])) return 3;
     if (t_sys && fw_sys_validate(cand.sys)) return 3;
     if (t_net && fw_net_validate(cand.net, d->model_rtu)) return 3;
+    if (t_ip && !ip_valid(ipc)) return 3;
     /* review M-05: network / comm-mode words only with the unlock key; a net-only change is NOT auto-saved (it is saved
      * by the checked NET_APPLY 0x400F or an explicit SAVE) */
     if (t_net && memcmp(cand.net, d->cfg.net, sizeof(cand.net)) != 0 && !fw_dev_unlocked(d)) return 3;
@@ -445,6 +475,7 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
         d->cfg = cand;
         if (non_net_change && d->ops.cfg_changed) d->ops.cfg_changed(d->ops.ctx);
     }
+    if (t_ip) memcpy(d->ip, ipc, sizeof(ipc));          /* RAM only: no save timer */
     if (unlock_v) { d->unlock_active = true; d->unlock_deadline_ms = d->now_ms + FW_UNLOCK_MS; (void)unlockval; }
     if (userdo_v) { d->user_do = userdo; if (d->ops.user_do) d->ops.user_do(d->ops.ctx, userdo); }
     for (unsigned a = 0; a < d->axis_count; ++a)

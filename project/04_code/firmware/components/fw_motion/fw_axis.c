@@ -39,7 +39,7 @@ void fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz)
 static void set_servo(fw_axis_t *a)
 {
     const bool auto_on = PAR(a)[FW_P_SVON_MODE] == 0 && a->mv != MV_IDLE;
-    const bool want = TELE(a).servo_manual || auto_on;
+    const bool want = TELE(a).servo_manual || auto_on || a->ip_hold;     /* D-089: no servo drop between parks */
     if (want != a->servo_out) { a->servo_out = want; fw_hal_servo_set(a->idx, want); }
 }
 
@@ -64,6 +64,7 @@ static void finalize(fw_axis_t *a, uint16_t cause, uint16_t leg_result, uint16_t
     a->position = (int32_t)cur_signed_pos(a, n);
     a->mv = MV_IDLE;
     a->test_active = false;
+    a->stream = false;
     a->last_hz = 0;
     t->pulses_done = n;
     if (n > 0) t->loop_seen = (leg_result != 3);              /* PCNT counted the output pin; 3 = count mismatch */
@@ -115,8 +116,13 @@ static uint8_t start_move(fw_axis_t *a, bool forward, uint32_t pulses, uint32_t 
     a->user_cause = 0;
     a->mv = MV_RUN;                                 /* servo output follows */
     set_servo(a);
-    fw_hal_dir_set(a->idx, (forward != (par[FW_P_DIR_INVERT] != 0)));
-    fw_hal_delay_us(par[FW_P_DIR_SETUP_US]);
+    const bool lvl = forward != (par[FW_P_DIR_INVERT] != 0);
+    if (!a->dir_known || a->dir_lvl != lvl) {        /* review M-05: hold after the last pulse, then setup before the first */
+        if (a->dir_known) fw_hal_delay_us(par[FW_P_DIR_SETUP_US]);
+        fw_hal_dir_set(a->idx, lvl);
+        fw_hal_delay_us(par[FW_P_DIR_SETUP_US]);
+        a->dir_known = true; a->dir_lvl = lvl;
+    }
     const int e = fw_hal_pulse_start(a->idx, start, pulses);
     if (e != FW_PE_OK) {
         a->mv = MV_IDLE; set_servo(a);
@@ -222,17 +228,94 @@ static uint8_t cmd_test(fw_axis_t *a, bool forward)
 
 /* D-088: side-effect-free part of the start checks (start_move, cmd_start_with) for the X/Y simultaneous start.
  * Speed/tick limits are checked by the real start; the caller rolls back if that one fails. */
-uint8_t fw_axis_start_check(const fw_axis_t *a, bool absolute)
+uint8_t fw_axis_ready_check(const fw_axis_t *a)
 {
-    const uint16_t *op = OP(a);
     if (!engine_allowed(a)) return FW_RES_ALARM;
     if (fw_hal_stop_input(a->idx) || (fw_hal_stop_blocking(a->idx) && !fw_hal_stop_latched(a->idx))) return FW_RES_ESTOP;
     if (a->sticky_alarm != FW_AL_NONE) return FW_RES_ALARM;
     if (a->mv != MV_IDLE) return FW_RES_RUNNING;
     if (PAR(a)[FW_P_SVON_MODE] == 1 && !a->dev->ax[a->idx].servo_manual) return FW_RES_SERVO_OFF;
+    return FW_RES_OK;
+}
+
+uint8_t fw_axis_start_check(const fw_axis_t *a, bool absolute)
+{
+    const uint16_t *op = OP(a);
+    const uint8_t r = fw_axis_ready_check(a);
+    if (r != FW_RES_OK) return r;
     if (absolute && !a->pos_valid && PAR(a)[FW_P_REQUIRE_HOME]) return FW_RES_POS_INVALID;
     if (!absolute && (int32_t)fw_w32(op, FW_O_TARGET) == 0) return FW_RES_RANGE;
     return FW_RES_OK;
+}
+
+/* ---- D-089 interpolator stream ---- */
+int32_t fw_axis_cur_pos(const fw_axis_t *a)
+{
+    return a->mv != MV_IDLE ? (int32_t)cur_signed_pos(a, fw_hal_pulse_count(a->idx)) : a->position;
+}
+
+/* stop the pulses and book the position, without touching the move result / stop cause telemetry */
+static void park(fw_axis_t *a)
+{
+    fw_hal_pulse_stop(a->idx);
+    const uint32_t n = fw_hal_pulse_count(a->idx);
+    fw_hal_pulse_end(a->idx);
+    a->position = (int32_t)cur_signed_pos(a, n);
+    a->mv = MV_IDLE; a->stream = false; a->last_hz = 0;
+    a->ip_moved += n;
+    TELE(a).cmd_speed = 0;
+    TELE(a).pulses_done = a->ip_moved;
+    if (n > 0) TELE(a).loop_seen = true;
+    set_servo(a);
+}
+
+void fw_axis_stream_park(fw_axis_t *a)
+{
+    if (a->mv != MV_IDLE && a->stream) park(a);
+}
+
+uint8_t fw_axis_stream_run(fw_axis_t *a, bool forward, uint32_t hz)
+{
+    if (a->mv != MV_IDLE) {
+        if (!a->stream) return FW_RES_RUNNING;
+        if (forward == a->forward_positive) {
+            if (hz != a->last_hz) {
+                if (fw_hal_pulse_set_freq(a->idx, hz) != FW_PE_OK) return FW_RES_RANGE;
+                a->last_hz = hz;
+            }
+            TELE(a).cmd_speed = forward ? (int32_t)hz : -(int32_t)hz;
+            return FW_RES_OK;
+        }
+        park(a);                                    /* direction change: stop, then restart the other way */
+    }
+    const uint8_t r = start_move(a, forward, (uint32_t)INT32_MAX, hz, OP(a)[FW_O_ACCEL], OP(a)[FW_O_DECEL]);
+    if (r != FW_RES_OK) return r;
+    a->stream = true;
+    TELE(a).target_position_act = a->ip_target;      /* M-04: start_move wrote this segment's values */
+    TELE(a).pulses_done = a->ip_moved;
+    if (a->last_hz != hz && fw_hal_pulse_set_freq(a->idx, hz) == FW_PE_OK) a->last_hz = hz;   /* skip the start speed */
+    TELE(a).cmd_speed = forward ? (int32_t)a->last_hz : -(int32_t)a->last_hz;
+    return FW_RES_OK;
+}
+
+void fw_axis_stream_session(fw_axis_t *a, bool on, uint16_t end_cause, int32_t target)
+{
+    if (on) {
+        a->ip_hold = true; a->ip_target = target; a->ip_moved = 0;
+        TELE(a).target_position_act = target; TELE(a).pulses_done = 0;
+        a->done_ok = TELE(a).last_ok = false;
+        set_servo(a);
+        return;
+    }
+    if (a->mv != MV_IDLE && a->stream) park(a);
+    a->ip_hold = false;
+    if (end_cause) {
+        fw_axis_tele_t *t = &TELE(a);
+        t->last_stop_cause = end_cause;
+        a->done_ok = t->last_ok = (end_cause == FW_SC_DONE);
+        if (end_cause == FW_SC_DONE) t->move_count++;
+    }
+    set_servo(a);
 }
 
 uint8_t fw_axis_start_legacy(fw_axis_t *a)
@@ -256,7 +339,7 @@ void fw_axis_legacy_reset(fw_axis_t *a)
 
 static void begin_decel(fw_axis_t *a, uint16_t cause)
 {
-    if (a->mv != MV_RUN) return;
+    if (a->mv != MV_RUN || a->stream) return;      /* D-089: an interpolated axis is stopped along the path by fw_motion */
     uint32_t stop_at = 0;
     const uint32_t n = fw_hal_pulse_count(a->idx);
     a->user_cause = cause;
@@ -289,6 +372,8 @@ uint8_t fw_axis_command_gated(fw_axis_t *a, uint16_t cmd, bool start_blocked)
 uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd)
 {
     fw_axis_tele_t *t = &TELE(a);
+    if (a->ip_hold && cmd != FW_CMD_STOP && cmd != FW_CMD_QUICK_STOP)   /* review C-01: interpolation owns the axis */
+        return reject(a, FW_RES_RUNNING, false);
     switch (cmd) {
     case FW_CMD_START_ABS: return cmd_start(a, true);
     case FW_CMD_START_REL: return cmd_start(a, false);
@@ -340,6 +425,10 @@ void fw_axis_poll(fw_axis_t *a)
             /* the ISR already cut the output; book the pulses that really went out */
             finalize(a, FW_SC_QUICK, 2, 1);
             if (PAR(a)[FW_P_ESTOP_POS] == 0) a->pos_valid = false;
+        } else if (a->stream) {                                      /* D-089: frequency set by the interpolator */
+            const uint32_t n = fw_hal_pulse_count(a->idx);
+            t->pulses_done = a->ip_moved + n;                        /* whole session, not this segment (M-04) */
+            if (n > 0) t->loop_seen = true;
         } else if (fw_hal_pulse_finished(a->idx)) {
             const uint32_t n = fw_hal_pulse_count(a->idx);
             finalize(a, FW_SC_DONE, n == a->target_pulses ? 1 : 3, n == a->target_pulses ? 0 : 2);
@@ -375,16 +464,17 @@ void fw_axis_poll(fw_axis_t *a)
         a->init_alarm = ia;
     }
 
-    /* telemetry */
+    /* telemetry. review M-04: an axis parked inside an interpolation session still reports BUSY / positioning */
     const bool running = a->mv != MV_IDLE;
+    const bool busy = running || a->ip_hold;
     const uint32_t n = running ? fw_hal_pulse_count(a->idx) : 0;
     t->cmd_position = (int32_t)(running ? cur_signed_pos(a, n) : (uint32_t)a->position);
-    t->moving = running;
+    t->moving = busy;
     t->alarm_code = blocking ? FW_AL_ESTOP : a->sticky_alarm;      /* the STOP latch itself is the memory of 0x0101 */
     uint16_t st = 0;
     const bool engine = engine_allowed(a);
-    if (engine && !blocking && t->alarm_code == FW_AL_NONE && !running) st |= FW_ASB_READY;
-    if (running) st |= FW_ASB_BUSY;
+    if (engine && !blocking && t->alarm_code == FW_AL_NONE && !busy) st |= FW_ASB_READY;
+    if (busy) st |= FW_ASB_BUSY;
     if (a->done_ok) st |= FW_ASB_DONE;
     if (t->alarm_code != FW_AL_NONE) st |= FW_ASB_ALARM;
     if (blocking) st |= FW_ASB_ESTOP;
@@ -392,6 +482,6 @@ void fw_axis_poll(fw_axis_t *a)
     if (!a->pos_valid) st |= FW_ASB_POS_INVALID;
     t->status = st;
     t->state = blocking ? FW_AS_ESTOP : a->mv == MV_DECEL ? FW_AS_DECEL_STOP : t->alarm_code ? FW_AS_ALARM :
-               running ? FW_AS_POSITIONING : (PAR(a)[FW_P_SVON_MODE] == 1 && !a->servo_out) ? FW_AS_SERVO_OFF : FW_AS_IDLE;
+               busy ? FW_AS_POSITIONING : (PAR(a)[FW_P_SVON_MODE] == 1 && !a->servo_out) ? FW_AS_SERVO_OFF : FW_AS_IDLE;
     set_servo(a);
 }

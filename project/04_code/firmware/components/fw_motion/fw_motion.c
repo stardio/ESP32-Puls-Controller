@@ -1,4 +1,5 @@
 #include "fw_motion.h"
+#include <math.h>
 #include <string.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -7,6 +8,7 @@
 #include "fw_axis.h"
 #include "fw_cfg.h"
 #include "fw_hal.h"
+#include "fw_interp.h"
 
 static const char *TAG = "FW_MOTION";
 #define PERIOD_MS CONFIG_FW_UPDATE_MS
@@ -36,13 +38,147 @@ void fw_motion_set_clients(unsigned n) { fw_motion_lock(); s_dev.tcp_clients = (
 void fw_motion_note_rtu_rx(void) { fw_motion_lock(); s_dev.now_ms = fw_hal_ms(); fw_dev_note_rtu_rx(&s_dev); fw_motion_unlock(); }
 void fw_motion_set_mac(const uint8_t mac[6]) { fw_motion_lock(); memcpy(s_dev.mac, mac, 6); fw_motion_unlock(); }
 
-/* review M-03: from the moment motion_task decides to save / reboot (under the lock) no start is accepted */
-static bool start_blocked(void) { return s_saving || s_reboot_commit; }
+/* ------------------------------------------------------------------ D-089 X/Y interpolation */
+#define IP_K         200.0       /* 1/s: position error gain (5 ms). IP_K * PERIOD_MS < 1000 so the end is never overshot */
+#define IP_F_MIN     50.0        /* Hz: slower axis demand parks the axis (MCPWM floor at 2 MHz resolution = 31 Hz) */
+#define IP_SETTLE_MS 3000u       /* after the planned end: time allowed to reach the exact end point */
+#define IP_DIR_SETUP_MAX_US 200u /* [recommended] restarts busy-wait dir_setup_us (twice on a reversal) inside the lock */
+static struct {
+    bool     active;
+    bool     commloss;           /* review M-02: comm loss seen; the alarm is raised after the path deceleration */
+    fw_ip_t  p;
+    int32_t  base[2], fin[2];    /* start position, end position (absolute pulses) */
+    uint32_t t0_ms;
+} s_ip;
+
+/* review M-03: from the moment motion_task decides to save / reboot (under the lock) no start is accepted.
+ * D-089: nor while an interpolation owns both axes (an axis parked mid-path looks idle). */
+static bool start_blocked(void) { return s_saving || s_reboot_commit || s_ip.active; }
 
 static bool any_running(void)
 {
+    if (s_ip.active) return true;
     for (unsigned a = 0; a < s_dev.axis_count; ++a) if (fw_axis_running(&s_ax[a])) return true;
     return false;
+}
+
+static double axis_max_hz(unsigned a)
+{
+    const uint32_t m = fw_w32(s_dev.cfg.par[a], FW_P_MAX_SPEED);
+    return m < FW_SPEED_MAX_HZ ? (double)m : (double)FW_SPEED_MAX_HZ;
+}
+
+static void ip_finish(uint16_t state, uint16_t result, uint16_t cause)
+{
+    for (unsigned a = 0; a < 2; ++a) fw_axis_stream_session(&s_ax[a], false, cause, 0);
+    s_ip.active = false;
+    s_dev.ip_state = state; s_dev.ip_result = result;
+    if (s_ip.commloss)                                  /* M-02: now the comm-loss alarm (axes already idle) */
+        for (unsigned a = 0; a < 2; ++a) fw_axis_decel_all_reason(&s_ax[a], FW_AL_COMMLOSS);
+    s_ip.commloss = false;
+}
+
+static uint16_t ip_refuse(uint16_t result)
+{
+    s_dev.ip_result = result;
+    return FW_SRES_REFUSED;
+}
+
+/* sys_command INTERP_START: plan from the 0x0150 block and the current positions; both axes or nothing */
+static uint16_t ip_start(void)
+{
+    if (s_dev.axis_count < 2) return ip_refuse(FW_IP_E_RANGE);
+    if (start_blocked()) { s_dev.ip_result = FW_RES_RUNNING; return FW_SRES_AXIS_RUNNING; }
+    const uint16_t *ip = s_dev.ip;
+    const bool absolute = ip[FW_IPO_ABS] != 0;
+    for (unsigned a = 0; a < 2; ++a) {
+        uint8_t r = fw_axis_ready_check(&s_ax[a]);
+        if (r == FW_RES_OK && fw_hal_stop_latched(a)) r = FW_RES_ESTOP;     /* M-01: release the latch with a single-axis start */
+        if (r == FW_RES_OK && absolute && !s_ax[a].pos_valid && s_dev.cfg.par[a][FW_P_REQUIRE_HOME]) r = FW_RES_POS_INVALID;
+        if (r == FW_RES_OK && s_dev.cfg.par[a][FW_P_DIR_SETUP_US] > IP_DIR_SETUP_MAX_US) r = FW_RES_RANGE;   /* M-05 */
+        if (r != FW_RES_OK) { s_dev.ax[a].cmd_result = r; return ip_refuse(r); }
+    }
+    const int32_t base[2] = {s_ax[0].position, s_ax[1].position};
+    const int64_t ex = (int32_t)fw_w32(ip, FW_IPO_END_X), ey = (int32_t)fw_w32(ip, FW_IPO_END_Y);
+    const int64_t dx = absolute ? ex - base[0] : ex, dy = absolute ? ey - base[1] : ey;
+    if (dx < INT32_MIN || dx > INT32_MAX || dy < INT32_MIN || dy > INT32_MAX ||
+        (int64_t)base[0] + dx > INT32_MAX || (int64_t)base[0] + dx < INT32_MIN ||
+        (int64_t)base[1] + dy > INT32_MAX || (int64_t)base[1] + dy < INT32_MIN) return ip_refuse(FW_IP_E_RANGE);
+    const int r = fw_ip_plan(&s_ip.p, (uint8_t)ip[FW_IPO_MODE], (int32_t)dx, (int32_t)dy, (int32_t)fw_w32(ip, FW_IPO_CTR_I),
+                             (int32_t)fw_w32(ip, FW_IPO_CTR_J), fw_w32(ip, FW_IPO_FEED), ip[FW_IPO_ACCEL], ip[FW_IPO_DECEL]);
+    if (r != FW_IP_OK) return ip_refuse((uint16_t)r);
+    double vx, vy;
+    fw_ip_axis_peak(&s_ip.p, &vx, &vy);
+    if (vx > axis_max_hz(0) || vy > axis_max_hz(1)) return ip_refuse(FW_IP_E_RANGE);   /* feed too fast for an axis */
+    s_ip.base[0] = base[0]; s_ip.base[1] = base[1];
+    s_ip.fin[0] = (int32_t)(base[0] + dx); s_ip.fin[1] = (int32_t)(base[1] + dy);
+    s_ip.t0_ms = fw_hal_ms();
+    s_ip.active = true;
+    s_ip.commloss = false;
+    for (unsigned a = 0; a < 2; ++a) fw_axis_stream_session(&s_ax[a], true, 0, s_ip.fin[a]);
+    s_dev.ip_state = FW_IPS_RUN; s_dev.ip_result = FW_IP_OK;
+    return FW_SRES_OK;
+}
+
+/* decelerate along the path (STOP, STOP_ALL, comm loss) or stop at once (QUICK_STOP) */
+static void ip_stop(bool quick)
+{
+    if (!s_ip.active) return;
+    if (quick) { ip_finish(FW_IPS_STOPPED, FW_IP_OK, FW_SC_QUICK); return; }
+    fw_ip_stop(&s_ip.p, (fw_hal_ms() - s_ip.t0_ms) / 1000.0);
+    double x, y;
+    fw_ip_xy(&s_ip.p, fw_ip_end_s(&s_ip.p), &x, &y);
+    s_ip.fin[0] = s_ip.base[0] + (int32_t)lround(x);
+    s_ip.fin[1] = s_ip.base[1] + (int32_t)lround(y);
+    s_dev.ip_state = FW_IPS_STOPPING;
+}
+
+/* every motion-task pass: path point -> axis frequency/direction (feed-forward + position error), exact end point */
+static void ip_tick(uint32_t now)
+{
+    if (!s_ip.active) return;
+    for (unsigned a = 0; a < 2; ++a) {               /* STOP input or alarm: abort (comm loss: decel along the path) */
+        const uint16_t al = fw_axis_sticky_alarm(&s_ax[a]);
+        if (fw_hal_stop_blocking(a) || (al != FW_AL_NONE && al != FW_AL_COMMLOSS)) {
+            ip_finish(FW_IPS_ABORTED, FW_IP_E_ABORT, FW_SC_QUICK);
+            return;
+        }
+    }
+    const double t = (now - s_ip.t0_ms) / 1000.0, dt = PERIOD_MS / 1000.0;
+    const bool ended = t >= s_ip.p.T;
+    double x = 0, y = 0, x2 = 0, y2 = 0;
+    if (!ended) {
+        fw_ip_xy(&s_ip.p, fw_ip_s(&s_ip.p, t, NULL), &x, &y);
+        fw_ip_xy(&s_ip.p, fw_ip_s(&s_ip.p, t + dt, NULL), &x2, &y2);
+    }
+    const double tgt[2] = {x, y}, vff[2] = {(x2 - x) / dt, (y2 - y) / dt};
+    bool all_there = true;
+    for (unsigned a = 0; a < 2; ++a) {
+        const int32_t cur = fw_axis_cur_pos(&s_ax[a]);
+        double f;
+        if (ended) {
+            const int32_t e = s_ip.fin[a] - cur;
+            if (e == 0) { fw_axis_stream_park(&s_ax[a]); continue; }
+            all_there = false;
+            f = IP_K * e;
+            if (fabs(f) < IP_F_MIN) f = e > 0 ? IP_F_MIN : -IP_F_MIN;
+        } else {
+            all_there = false;
+            const double err = tgt[a] - (double)(cur - s_ip.base[a]);
+            f = vff[a] + IP_K * err;
+            if (fabs(f) < IP_F_MIN) {
+                if (fabs(err) < 0.5) { fw_axis_stream_park(&s_ax[a]); continue; }
+                f = err > 0 ? IP_F_MIN : -IP_F_MIN;
+            }
+        }
+        const uint8_t r = fw_axis_stream_run(&s_ax[a], f > 0, (uint32_t)fmin(fabs(f), axis_max_hz(a)));
+        if (r != FW_RES_OK) { ip_finish(FW_IPS_ABORTED, r, FW_SC_QUICK); return; }
+    }
+    if (ended && all_there)
+        ip_finish(s_dev.ip_state == FW_IPS_STOPPING ? FW_IPS_STOPPED : FW_IPS_DONE, FW_IP_OK,
+                  s_dev.ip_state == FW_IPS_STOPPING ? FW_SC_STOP_CMD : FW_SC_DONE);
+    else if (ended && now - s_ip.t0_ms > (uint32_t)(s_ip.p.T * 1000.0) + IP_SETTLE_MS)
+        ip_finish(FW_IPS_ABORTED, FW_IP_E_TIMEOUT, FW_SC_QUICK);
 }
 
 static int update_oe(void)
@@ -60,6 +196,11 @@ static uint8_t op_axis_cmd(void *ctx, uint8_t axis, uint16_t cmd)
 {
     (void)ctx;
     if (axis >= s_dev.axis_count) return FW_RES_RANGE;
+    if (s_ip.active && (cmd == FW_CMD_STOP || cmd == FW_CMD_QUICK_STOP)) {      /* D-089: stop the path, not one axis */
+        ip_stop(cmd == FW_CMD_QUICK_STOP);
+        s_dev.ax[axis].cmd_result = FW_RES_OK;
+        return FW_RES_OK;
+    }
     return fw_axis_command_gated(&s_ax[axis], cmd, start_blocked());   /* one gate for every start command (R3-M1) */
 }
 static uint8_t op_legacy_start(void *ctx)
@@ -74,13 +215,16 @@ static void op_cfg_changed(void *ctx) { (void)ctx; fw_save_note_write(&s_save, f
 
 /* D-088: X/Y simultaneous start from each axis's operand registers (target_position, move_speed, accel, decel).
  * All-or-nothing: if any axis fails the pre-check nothing starts; if a real start then fails, the axes already
- * started in this pass are quick-stopped. Both starts happen in the same motion-task pass (under the lock). */
+ * started in this pass are quick-stopped. Both starts happen in the same motion-task pass (under the lock).
+ * Review M-01: an axis with a latched STOP refuses (0x10) instead of releasing the latch here, so a refused
+ * simultaneous start never leaves one axis released; the latch is released by that axis's own start (D-072). */
 static uint16_t start_all(bool absolute)
 {
     if (start_blocked()) return FW_SRES_AXIS_RUNNING;
     bool ok = true;
     for (unsigned a = 0; a < s_dev.axis_count; ++a) {
-        const uint8_t r = fw_axis_start_check(&s_ax[a], absolute);
+        uint8_t r = fw_axis_start_check(&s_ax[a], absolute);
+        if (r == FW_RES_OK && fw_hal_stop_latched(a)) r = FW_RES_ESTOP;
         if (r != FW_RES_OK) { s_dev.ax[a].cmd_result = r; ok = false; }
     }
     if (!ok) return FW_SRES_REFUSED;
@@ -130,8 +274,11 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
         s_dev.hist_count = 0;
         return FW_SRES_OK;
     case FW_SYS_STOP_ALL:
+        ip_stop(false);                                                 /* D-089: decelerate along the path */
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_command(&s_ax[a], FW_CMD_STOP);
         return FW_SRES_OK;
+    case FW_SYS_INTERP_START:
+        return ip_start();
     case FW_SYS_START_ALL_REL:
     case FW_SYS_START_ALL_ABS:
         return start_all(cmd == FW_SYS_START_ALL_ABS);
@@ -224,22 +371,26 @@ static void motion_task(void *arg)
         const uint8_t pend = __atomic_exchange_n(&s_start_pending, 0, __ATOMIC_SEQ_CST);
         for (unsigned a = 0; a < s_dev.axis_count; ++a) {
             if (!(pend & (1u << a))) continue;
-            if (start_blocked()) keep |= (uint8_t)(1u << a);          /* m-04: not dropped, retried after the save */
+            if (s_ip.active) s_dev.ax[a].cmd_result = FW_RES_RUNNING;   /* D-089: dropped, not deferred past the path */
+            else if (start_blocked()) keep |= (uint8_t)(1u << a);      /* m-04: not dropped, retried after the save */
             else fw_axis_start_physical(&s_ax[a]);
         }
         if (keep) __atomic_fetch_or(&s_start_pending, keep, __ATOMIC_SEQ_CST);
         const uint8_t sync = __atomic_exchange_n(&s_sync_pending, 0, __ATOMIC_SEQ_CST);
         if (sync & 2u) s_dev.sys_cmd_result = op_sys_cmd(NULL, FW_SYS_STOP_ALL);          /* STOP wins over START */
         else if (sync & 1u) {
-            if (start_blocked()) __atomic_fetch_or(&s_sync_pending, 1u, __ATOMIC_SEQ_CST);   /* retried after the save */
+            if (s_ip.active) s_dev.sys_cmd_result = FW_SRES_AXIS_RUNNING;                 /* D-089: dropped */
+            else if (start_blocked()) __atomic_fetch_or(&s_sync_pending, 1u, __ATOMIC_SEQ_CST);   /* retried after the save */
             else s_dev.sys_cmd_result = start_all(false);                              /* external input: relative */
         }
+        ip_tick(now);                                                     /* D-089: before the axes book their pulses */
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_poll(&s_ax[a]);
 
         const uint16_t *sys = s_dev.cfg.sys;
         const bool running = any_running();
         if (fw_commloss_check(&s_cl, sys[FW_S_COMMLOSS_EN] != 0, sys[FW_S_COMMLOSS_MS], sys[FW_S_COMMLOSS_SCOPE], running, now)) {
-            for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_decel_all_reason(&s_ax[a], FW_AL_COMMLOSS);
+            if (s_ip.active) { ip_stop(false); s_ip.commloss = true; }   /* M-02: alarm after the path decel (ip_finish) */
+            else for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_decel_all_reason(&s_ax[a], FW_AL_COMMLOSS);
             s_cl_tripped = true;
         }
         if (s_cl_tripped) {                                           /* m-06: cleared when no axis holds the comm-loss alarm */

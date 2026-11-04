@@ -15,7 +15,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import alarms, backup as B, regmap as R
+from . import alarms, backup as B, interp as IPM, regmap as R
 from .device import Device, open_target
 from .modbus import ModbusError, ModbusException
 
@@ -135,6 +135,10 @@ class Bridge:
             hint = sys2[R.ALARM_HINT - R.ALARM_AXIS_MASK]
             out["alarm_hint"] = self._alarm(hint)
             out["axes"] = [self._axis(dev, n) for n in range(1, min(out["axis_count"], 2) + 1)]
+            ips, ipr = dev.read_words(R.IP_STATE, 2)
+            out["ip"] = {"state": ips, "state_text": R.IP_STATES.get(ips, str(ips)), "result": ipr,
+                         "result_text": R.IP_RESULTS.get(ipr, f"0x{ipr:02X}")}
+            out["t_ms"] = round(time.monotonic() * 1000)
             return out
         return self.call(rd)
 
@@ -271,6 +275,64 @@ class Bridge:
             text += " — " + ", ".join(f"{'XY'[i]}축 {CMD_RESULT.get(c, f'0x{c:02X}')}" for i, c in enumerate(axes))
         return {"ok": res == R.RESULT_OK, "result": res, "text": text}
 
+    # ---- D-089 interpolation -------------------------------------------------------------------------------
+    IP_KEYS = ("ip_mode", "ip_abs", "ip_end_x", "ip_end_y", "ip_center_i", "ip_center_j", "ip_feed", "ip_accel_ms",
+               "ip_decel_ms")
+
+    def _ip_values(self, params):
+        """Validate the page's parameters against the register ranges; returns {field: value}."""
+        by_name = {f.name: f for f in R.INTERP}
+        out = {}
+        for k in self.IP_KEYS:
+            f = by_name[k]
+            try:
+                v = int(params.get(k[3:], f.default))
+            except (TypeError, ValueError):
+                raise ValueError(f"{k[3:]}: 정수가 아닙니다")
+            if (f.lo is not None and v < f.lo) or (f.hi is not None and v > f.hi):
+                raise ValueError(f"{k[3:]}: 범위 {f.lo}~{f.hi} 밖")
+            if f.kind == "s32" and not -2 ** 31 <= v < 2 ** 31:
+                raise ValueError(f"{k[3:]}: 범위 밖")
+            out[f] = v
+        return out
+
+    def interp_preview(self, params):
+        """Plan the path on the PC with the firmware's maths (svtool/interp.py). Start = current positions."""
+        try:
+            vals = {f.name: v for f, v in self._ip_values(params).items()}
+        except ValueError as e:
+            return {"ok": False, "text": str(e)}
+        start = self.call(lambda dev: [R.decode("s32", dev.read_words(R.AXIS_BASE[n] + R.A_CMDPOS, 2)) for n in (1, 2)])
+        ex, ey = vals["ip_end_x"], vals["ip_end_y"]
+        dx, dy = (ex - start[0], ey - start[1]) if vals["ip_abs"] else (ex, ey)
+        try:
+            p = IPM.Path(vals["ip_mode"], dx, dy, vals["ip_center_i"], vals["ip_center_j"], vals["ip_feed"],
+                         vals["ip_accel_ms"], vals["ip_decel_ms"])
+        except IPM.PlanError as e:
+            return {"ok": False, "text": str(e)}
+        vx, vy = p.axis_peak()
+        pts = [[round(t, 4), round(start[0] + x, 2), round(start[1] + y, 2)] for t, x, y, _ in p.samples(400)]
+        return {"ok": True, "start": start, "end": [start[0] + dx, start[1] + dy], "length": round(p.len, 1),
+                "time": round(p.T, 3), "peak_feed": round(p.vpk, 1), "axis_peak": [round(vx), round(vy)],
+                "radius": round(p.r, 1), "sweep_deg": round(abs(p.sweep) * 180 / 3.141592653589793, 2), "points": pts}
+
+    def interp_start(self, params):
+        try:
+            vals = self._ip_values(params)
+        except ValueError as e:
+            return {"ok": False, "text": str(e)}
+
+        def go(dev):
+            for f, v in sorted(vals.items(), key=lambda kv: kv[0].addr):
+                dev.write(f, v)
+            t_ms = round(time.monotonic() * 1000)          # same clock as state()["t_ms"]: aligns the live trace
+            res = dev.sys_command(R.CMD_INTERP_START)
+            ipr = dev.read_words(R.IP_RESULT, 1)[0]
+            return res, ipr, t_ms
+        res, ipr, t_ms = self.call(go)
+        text = "보간 시작" if res == R.RESULT_OK else f"{B.RESULT_TEXT.get(res, f'0x{res:02X}')} — {R.IP_RESULTS.get(ipr, f'0x{ipr:02X}')}"
+        return {"ok": res == R.RESULT_OK, "result": res, "ip_result": ipr, "text": text, "t_ms": t_ms}
+
     def backup(self):
         return self.call(lambda dev: B.make_backup(dev, self.target))
 
@@ -347,6 +409,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._guard(lambda: (200, self.bridge.write_params(int(body.get("axis", 0)), body.get("values") or {})))
         if path == "/api/save":
             return self._guard(lambda: (200, self.bridge.sys_command(R.CMD_SAVE)))
+        if path == "/api/interp/preview":
+            return self._guard(lambda: (200, self.bridge.interp_preview(body)))
+        if path == "/api/interp/start":
+            return self._guard(lambda: (200, self.bridge.interp_start(body)))
         if path == "/api/sync":
             return self._guard(lambda: (200, self.bridge.sync_command(str(body.get("cmd")), body.get("mode") == "ABS",
                                                                       body.get("operands"))))

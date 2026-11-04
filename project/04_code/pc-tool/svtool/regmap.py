@@ -23,6 +23,14 @@ HIST_COUNT, HIST_BASE = 0x3000, 0x3010
 CMD_ESTOP_RELEASE, CMD_SAVE, CMD_LOAD_DEFAULT, CMD_REBOOT, CMD_CLEAR_HIST, CMD_STOP_ALL = 1, 2, 3, 4, 5, 6
 CMD_FACTORY_RESET, CMD_NET_RESET = 7, 8
 CMD_START_ALL_REL, CMD_START_ALL_ABS = 9, 10    # D-088: X/Y simultaneous start, all-or-nothing
+CMD_INTERP_START = 11                            # D-089: X/Y interpolation from the 0x0150 block
+
+# D-089 interpolation block (RAM only, not backed up)
+IP_BASE, IP_STATE, IP_RESULT = 0x0150, 0x015E, 0x015F
+IP_STATES = {0: "대기", 1: "보간 운전", 2: "감속 정지 중", 3: "완료", 4: "중단(비상정지·알람)", 5: "정지"}
+IP_RESULTS = {0: "정상", 0x10: "거부: 비상정지", 0x11: "거부: 알람", 0x12: "거부: 서보 OFF", 0x13: "거부: 운전 중",
+              0x16: "거부: 위치 무효(원점복귀 필요)", 0x17: "거부: 값 범위(경로·속도)", 0x20: "중단: 비상정지·알람",
+              0x21: "중단: 끝점 도달 시간 초과"}
 RESULT_OK, RESULT_BUSY, RESULT_REFUSED, RESULT_LOCKED, RESULT_RUNNING = 0, 1, 0x10, 0x11, 0x12
 
 # axis_command values (5.5 + 5.12)
@@ -205,6 +213,16 @@ SYSTEM_RUNTIME = [
 ]
 HIST_N = 32
 
+INTERP = [
+    _f("ip_mode", 0x0150, "u16", True, 1, 0, 3),          # 0 none, 1 linear, 2 arc CW, 3 arc CCW
+    _f("ip_abs", 0x0151, "u16", True, 0, 0, 1),           # 0 relative, 1 absolute end point
+    _f("ip_end_x", 0x0152, "s32", True, 0), _f("ip_end_y", 0x0154, "s32", True, 0),
+    _f("ip_center_i", 0x0156, "s32", True, 0), _f("ip_center_j", 0x0158, "s32", True, 0),   # arc centre - start
+    _f("ip_feed", 0x015A, "u32", True, 10000, 1, 1000000),
+    _f("ip_accel_ms", 0x015C, "u16", True, 100, 10, 60000), _f("ip_decel_ms", 0x015D, "u16", True, 100, 10, 60000),
+    _f("ip_state", IP_STATE, "u16", False), _f("ip_result", IP_RESULT, "u16", False),
+]
+
 
 def backup_fields(axis_count: int) -> List[Field]:
     out = list(SYSTEM_SETTINGS)
@@ -218,7 +236,7 @@ def backup_fields(axis_count: int) -> List[Field]:
 
 
 def all_fields(axis_count: int) -> List[Field]:
-    out = list(SYSTEM_RUNTIME) + backup_fields(axis_count) + LEGACY_RUNTIME + hist_fields()
+    out = list(SYSTEM_RUNTIME) + backup_fields(axis_count) + LEGACY_RUNTIME + hist_fields() + INTERP
     for n in range(1, axis_count + 1):
         out += axis_runtime_fields(n)
     return out

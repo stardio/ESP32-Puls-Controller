@@ -2,7 +2,7 @@
 FW = ../../firmware/components
 INC = -I$(FW)/fw_core/include -I$(FW)/fw_hal/include -I$(FW)/fw_motion/include -I.
 CFLAGS = -std=c11 -Wall -Wextra -O1 -g -fno-math-errno $(INC)
-CORE = $(FW)/fw_core/fw_profile.c $(FW)/fw_core/fw_stop.c $(FW)/fw_core/fw_params.c $(FW)/fw_core/fw_regmap.c $(FW)/fw_core/fw_unit.c
+CORE = $(FW)/fw_core/fw_profile.c $(FW)/fw_core/fw_stop.c $(FW)/fw_core/fw_params.c $(FW)/fw_core/fw_regmap.c $(FW)/fw_core/fw_unit.c $(FW)/fw_core/fw_interp.c
 
 all: run
 test_core: test_core.c fw_test.h $(CORE)
