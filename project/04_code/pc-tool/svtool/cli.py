@@ -117,6 +117,11 @@ def cmd_sim(a):
     return run_server(a.port, a.axes, a.host, not a.no_console)
 
 
+def cmd_web(a):
+    from .web import run
+    return run(a.target, a.port, a.host, a.unit, a.timeout, not a.no_browser)
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="svtool", description="ESP32 펄스 서보 컨트롤러 PC 도구")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -144,6 +149,14 @@ def build_parser():
     s.add_argument("--port", type=int, default=5020); s.add_argument("--axes", type=int, default=2, choices=(1, 2))
     s.add_argument("--host", default="0.0.0.0"); s.add_argument("--no-console", action="store_true")
     s.set_defaults(fn=cmd_sim)
+    s = sub.add_parser("web", help="브라우저 운전·설정 화면 (TCP 모델)")
+    s.add_argument("--target", required=True, help="IP[:포트]")
+    s.add_argument("--unit", type=int, default=1, help="Modbus 유닛 ID (기본 1)")
+    s.add_argument("--timeout", type=float, default=1.0)
+    s.add_argument("--port", type=int, default=8080, help="웹 UI 포트 (기본 8080)")
+    s.add_argument("--host", default="127.0.0.1", help="열 주소 (기본 127.0.0.1 = 이 PC에서만 접속)")
+    s.add_argument("--no-browser", action="store_true", help="브라우저 자동 열기 안 함")
+    s.set_defaults(fn=cmd_web)
     return p
 
 

@@ -15,6 +15,14 @@ python -m svtool status --target IP                                # wiring_stat
 python -m svtool alarm --target IP [--history] [--messages 경로]   # 한글 원인·조치, 종료코드 4 = 알람 있음
 python -m svtool sim --port 5020 [--axes 2]                        # 시뮬레이터
 ```
+```
+python -m svtool web --target 192.168.0.220                        # 브라우저 운전·설정 화면, http://127.0.0.1:8080/
+```
+웹 UI(2026-11-04): 운전(축별 상태·위치, 서보 ON/OFF, 알람 해제·한글 원인, 상대/절대 이동, 감속/즉시 정지, 누르고 있는 동안만 도는 돌려보기), 파라미터(축 파라미터 읽기·쓰기·SAVE), 배선 점검(wiring_status), 백업 JSON 내려받기, 전체 정지. 복원·초기화·네트워크 변경은 명령줄에만 둔다.
+[권고] 안전 기본값: 127.0.0.1에만 열고(`--host`로 바꾸면 경고 출력), POST는 `X-Svtool` 헤더와 JSON 본문을 요구하며 Host가 로컬이 아니면 거부한다. 돌려보기는 TEST_POS/NEG를 200 ms마다 다시 보내고, 펌웨어가 500 ms 동안 못 받으면 스스로 감속 정지한다(창 닫힘·브라우저 정지·통신 단절 모두 정지). 버튼을 떼면 STOP도 보낸다.
+시험 펌웨어(test-fw, 0x7000 창)에는 맞지 않는다. 제품 펌웨어(regmap_version 2)나 시뮬레이터에 붙인다.
+실기 확인(2026-11-04, P4 v1.3 보드 + 제품 펌웨어 2axis_tcp 0.1.0, 1축 캐리어): 상태 읽기·배선 점검·한글 알람 표시, X축 START_REL 100 pulse 정확히 완료(정지 원인 '이동 완료'), Y축은 STOP 활성으로 0x10 거부, TEST_POS 1회 전송 후 keepalive 없음 → 약 0.6 s 뒤 자체 감속 정지, 파라미터 쓰기 확인. 관찰: 1,000 pps·100 pulse 이동이 0.5~1 s 걸림(펌웨어 가감속 동작, 원인 미확인).
+
 공통 옵션: `--unit`(기본 1), `--baud`, `--parity`, `--timeout`. restore 옵션: `--yes`, `--force`(regmap_version 불일치 무시), `--no-net`(네트워크 설정 제외). reset 옵션: `--confirm 문구`(비대화형), `--reboot`.
 
 ## 백업 파일(JSON)

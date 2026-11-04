@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>펄스 서보 컨트롤러</title>
+<style>
+:root {
+  --bg: #f3f4f1; --panel: #ffffff; --ink: #1d2124; --muted: #6a7177; --line: #dcdfdb;
+  --accent: #1f6f8b; --ok: #2e7d4f; --warn: #b7791f; --bad: #c0392b; --chip: #eceee9;
+  --readout: #0f1b22; --readout-ink: #7fe0c4;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #15191c; --panel: #1e2428; --ink: #e4e7e5; --muted: #98a0a6; --line: #333b40;
+    --accent: #5fb3cf; --ok: #5cc58a; --warn: #e2b04a; --bad: #ef6b5b; --chip: #2a3237; --readout: #0b1216; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line);
+  padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+header h1 { font-size: 16px; margin: 0; letter-spacing: -0.2px; }
+.conn { display: flex; align-items: center; gap: 6px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+.dot.on { background: var(--ok); }
+.meta { color: var(--muted); font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; }
+.meta b { color: var(--ink); font-weight: 600; font-family: var(--mono); }
+.spacer { flex: 1; }
+button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
+#stopAll { padding: 9px 18px; font-size: 15px; }
+.banner { margin: 12px 16px 0; padding: 9px 12px; border-radius: 6px; border: 1px solid; display: none; }
+.banner.show { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.banner.bad { border-color: var(--bad); color: var(--bad); }
+.banner.warn { border-color: var(--warn); color: var(--warn); }
+nav { display: flex; gap: 4px; padding: 12px 16px 0; flex-wrap: wrap; }
+nav button { border-radius: 6px 6px 0 0; border-bottom: none; background: transparent; }
+nav button.active { background: var(--panel); border-color: var(--line); font-weight: 600; }
+main { padding: 0 16px 24px; }
+.tab { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 0 6px 6px 6px; padding: 14px; }
+.tab.active { display: block; }
+.axes { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.axis { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.axis h2 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--chip); font-weight: 600; }
+.badge.run { background: var(--accent); color: #fff; }
+.badge.bad { background: var(--bad); color: #fff; }
+.readout { background: var(--readout); color: var(--readout-ink); border-radius: 6px; padding: 10px 12px;
+  font-family: var(--mono); display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; }
+.readout .k { color: #7c8d96; font-size: 11px; align-self: center; font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.readout .v { text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; }
+.readout .v.big { font-size: 26px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
+.chip { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: var(--chip); color: var(--muted); }
+.chip.hot { background: var(--bad); color: #fff; }
+.chip.good { background: var(--ok); color: #fff; }
+.alarm { border-left: 3px solid var(--bad); padding: 6px 10px; background: color-mix(in srgb, var(--bad) 8%, transparent); display: none; }
+.alarm.show { display: block; }
+.alarm b { color: var(--bad); }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hold { flex: 1; min-width: 120px; padding: 12px; font-weight: 600; user-select: none; touch-action: none; }
+.hold.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 8px 10px 10px; }
+legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+label.f { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+input, select { font: inherit; font-family: var(--mono); padding: 5px 7px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--bg); color: var(--ink); width: 100%; min-width: 0; }
+input.changed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--bg)); }
+.result { font-size: 12px; color: var(--muted); min-height: 18px; }
+.result.bad { color: var(--bad); } .result.ok { color: var(--ok); }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+td input { max-width: 180px; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.wire li { list-style: none; padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
+.wire ul { padding: 0; margin: 0; }
+.ok-t { color: var(--ok); font-weight: 700; } .ng-t { color: var(--bad); font-weight: 700; }
+.note { color: var(--muted); font-size: 12px; }
+@media (max-width: 520px) { .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .axes { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>펄스 서보 컨트롤러</h1>
+  <div class="conn"><span class="dot" id="dot"></span><span id="connText">연결 중…</span></div>
+  <div class="meta" id="meta"></div>
+  <div class="spacer"></div>
+  <button class="danger" id="stopAll" title="모든 축 감속 정지 (sys_command STOP_ALL)">■ 전체 정지</button>
+</header>
+
+<div class="banner bad" id="bnErr"></div>
+<div class="banner bad" id="bnEstop">비상정지(STOP) 입력이 활성입니다. 입력을 해제한 뒤 운전 명령을 보내면 래치가 풀립니다(D-072).</div>
+<div class="banner warn" id="bnRegmap"></div>
+<div class="banner warn" id="bnUnsaved">저장하지 않은 설정 변경이 있습니다. 재부팅하면 사라집니다. <button class="primary" data-save>설정 저장</button></div>
+
+<nav>
+  <button class="active" data-tab="run">운전</button>
+  <button data-tab="params">파라미터</button>
+  <button data-tab="wiring">배선 점검</button>
+  <button data-tab="backup">백업</button>
+</nav>
+
+<main>
+  <section class="tab active" id="tab-run"><div class="axes" id="axes"></div></section>
+
+  <section class="tab" id="tab-params">
+    <div class="toolbar">
+      <select id="pAxis" style="width:auto"></select>
+      <button id="pReload">다시 읽기</button>
+      <button class="primary" id="pApply" disabled>변경 적용</button>
+      <button data-save>설정 저장(SAVE)</button>
+      <span class="result" id="pResult"></span>
+    </div>
+    <p class="note">적용은 장치 RAM에만 씁니다. 전원을 꺼도 유지하려면 <b>설정 저장</b>을 누르세요. 축이 운전 중이면 일부 항목은 거부될 수 있습니다.</p>
+    <table><thead><tr><th>항목</th><th>설명</th><th>값</th><th>범위</th><th>기본값</th></tr></thead><tbody id="pBody"></tbody></table>
+  </section>
+
+  <section class="tab" id="tab-wiring">
+    <p class="note">장치가 스스로 판정한 배선 상태(wiring_status)입니다. 0.25초마다 갱신됩니다.</p>
+    <div class="wire" id="wire"></div>
+  </section>
+
+  <section class="tab" id="tab-backup">
+    <p>장치 설정(시스템, 축 파라미터, 포인트 테이블, 네트워크, 레거시 창)을 JSON 파일로 내려받습니다. 형식은 <code>svtool backup</code>과 같습니다.</p>
+    <p><a href="/api/backup"><button class="primary">백업 파일 내려받기</button></a></p>
+    <p class="note">복원은 차이 확인과 잠금 해제 절차가 있어 명령줄에서 합니다: <code>python -m svtool restore 파일 --target IP</code></p>
+  </section>
+</main>
+
+<script>
+"use strict";
+const LABEL = {
+  pulse_mode: "펄스 방식 (0 펄스+방향, 1 CW/CCW)", pulse_logic: "펄스 논리 (0 정, 1 부)", dir_invert: "방향 반전",
+  dir_setup_us: "방향 셋업 시간 µs", max_speed: "최고 속도 pps", start_speed: "시작 속도 pps",
+  default_accel_ms: "기본 가속 ms", default_decel_ms: "기본 감속 ms", accel_curve: "가감속 곡선 (0 직선, 1 S자)",
+  s_curve_ratio: "S자 비율 %", jog_speed: "JOG 속도 pps", jog_max_speed: "JOG 최고 속도 pps", jog_accel_ms: "JOG 가속 ms",
+  home_method: "원점복귀 방식", home_dir: "원점복귀 방향", home_speed_high: "원점 고속 pps", home_speed_creep: "원점 저속 pps",
+  home_offset: "원점 오프셋 pulse", home_timeout_s: "원점 제한시간 s", swlimit_enable: "소프트 리밋 사용 (b0 +, b1 −)",
+  swlimit_pos: "+소프트 리밋 pulse", swlimit_neg: "−소프트 리밋 pulse", input_logic: "입력 논리 비트", input_filter_ms: "입력 필터 ms",
+  limit_stop_mode: "리밋 정지 (0 즉시, 1 감속)", limit_decel_ms: "리밋 감속 ms", alarm_stop_mode: "알람 정지 (0 즉시, 1 감속)",
+  inp_wait_enable: "INP 대기 사용", inp_timeout_ms: "INP 제한시간 ms", svon_at_boot: "부팅 시 서보 ON",
+  estop_pos_policy: "비상정지 후 위치 (0 무효, 1 유지)", require_home: "운전 전 원점복귀 필요", svon_mode: "서보 ON 필요 운전",
+  pulse_res_hz: "펄스 분해능 Hz", unit_mode: "단위 (0 pulse, 1 mm, 2 °)", pulses_per_rev: "1회전 펄스 수", lead_um: "리드 µm",
+  gear_num: "기어비 분자", gear_den: "기어비 분모", test_rpm: "돌려보기 속도 rpm",
+};
+const $ = (s, el = document) => el.querySelector(s);
+const fmt = n => (n ?? 0).toLocaleString("ko-KR");
+let state = null, axesBuilt = 0, pending = false;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-Svtool": "1" },
+    body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  return r.json();
+}
+
+// ---------- tabs ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "params") loadParams();
+});
+
+// ---------- axis cards ----------
+function axisCard(ax) {
+  const el = document.createElement("div");
+  el.className = "axis"; el.id = "ax" + ax.n;
+  el.innerHTML = `
+    <h2>${ax.name}축 <span class="badge" data-k="state"></span><span class="spacer"></span></h2>
+    <div class="readout">
+      <span class="k">지령 위치 pulse</span><span class="v big" data-k="pos"></span>
+      <span class="k">단위 위치</span><span class="v" data-k="upos"></span>
+      <span class="k">지령 속도 pps</span><span class="v" data-k="spd"></span>
+      <span class="k">이번 이동 출력 pulse</span><span class="v" data-k="done"></span>
+    </div>
+    <div class="chips" data-k="bits"></div>
+    <div class="alarm" data-k="alarm"></div>
+    <div class="row">
+      <button data-cmd="SERVO_ON">서보 ON</button><button data-cmd="SERVO_OFF">서보 OFF</button>
+      <button data-cmd="ALARM_RESET">알람 해제</button>
+      <span class="spacer"></span>
+      <button data-cmd="STOP">감속 정지</button><button class="danger" data-cmd="QUICK_STOP">즉시 정지</button>
+    </div>
+    <fieldset><legend>돌려보기 — 누르고 있는 동안만 회전 (돌려보기 속도 rpm 파라미터)</legend>
+      <div class="row"><button class="hold" data-hold="TEST_NEG">◀ − 방향</button><button class="hold" data-hold="TEST_POS">+ 방향 ▶</button></div>
+    </fieldset>
+    <fieldset><legend>위치결정 이동</legend>
+      <div class="grid4">
+        <label class="f">방식<select data-op="mode"><option value="START_REL">상대</option><option value="START_ABS">절대</option></select></label>
+        <label class="f">목표 pulse<input data-op="target" type="number" step="1" value="1000"></label>
+        <label class="f">속도 pps<input data-op="speed" type="number" min="1" step="1" value="10000"></label>
+        <label class="f">가속/감속 ms<input data-op="acc" type="number" min="10" max="60000" step="1" value="100"></label>
+      </div>
+      <div class="row" style="margin-top:8px"><button class="primary" data-move>이동 시작</button>
+        <button data-cmd="SET_POSITION" title="정지 중일 때 현재 위치를 목표 pulse 값으로 재설정">현재 위치 = 목표값</button></div>
+    </fieldset>
+    <div class="result" data-k="res"></div>
+    <div class="note" data-k="foot"></div>`;
+  el.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () => {
+    const op = b.dataset.cmd === "SET_POSITION" ? { target: +$("[data-op=target]", el).value } : undefined;
+    send(ax.n, b.dataset.cmd, op);
+  });
+  $("[data-move]", el).onclick = () => {
+    const acc = +$("[data-op=acc]", el).value;
+    send(ax.n, $("[data-op=mode]", el).value, { target: +$("[data-op=target]", el).value,
+      speed: +$("[data-op=speed]", el).value, accel_ms: acc, decel_ms: acc });
+  };
+  el.querySelectorAll("[data-hold]").forEach(b => holdButton(b, ax.n));
+  return el;
+}
+
+async function send(n, cmd, operands) {
+  const res = $(`#ax${n} [data-k=res]`);
+  res.className = "result"; res.textContent = `${cmd} 전송 중…`;
+  try {
+    const r = await api("/api/axis", { axis: n, cmd, operands });
+    res.className = "result " + (r.ok ? "ok" : "bad");
+    res.textContent = `${cmd}: ${r.text}`;
+    return r;
+  } catch (e) { res.className = "result bad"; res.textContent = `${cmd}: 웹 서버 응답 없음`; }
+}
+
+// Hold-to-run: resend TEST_POS/NEG every 200 ms (firmware keepalive 500 ms). Any release path stops it.
+function holdButton(btn, n) {
+  let timer = null;
+  const stop = () => {
+    if (!timer) return;
+    clearInterval(timer); timer = null; btn.classList.remove("active");
+    send(n, "STOP");
+  };
+  btn.addEventListener("pointerdown", e => {
+    if (timer) return;
+    btn.setPointerCapture(e.pointerId);
+    btn.classList.add("active");
+    const tick = () => send(n, btn.dataset.hold).then(r => { if (r && !r.ok) stop(); });
+    tick(); timer = setInterval(tick, 200);
+  });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => btn.addEventListener(ev, stop));
+  window.addEventListener("blur", stop);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stop(); });
+}
+
+function render(s) {
+  state = s;
+  $("#dot").classList.toggle("on", !!s.connected);
+  $("#connText").textContent = s.connected ? `${s.target} · ${s.rtt_ms} ms` : "연결 끊김";
+  $("#bnErr").classList.remove("show");
+  const up = s.uptime_s, h = Math.floor(up / 3600), m = Math.floor(up / 60) % 60;
+  $("#meta").innerHTML = `<span>펌웨어 <b>${s.fw_version}</b></span><span>regmap <b>${s.regmap_version}</b></span>
+    <span>축 <b>${s.axis_count}</b></span><span>가동 <b>${h}h ${m}m</b></span><span>접속 <b>${s.tcp_clients}</b></span>`;
+  const stopped = s.axes.filter(a => a.status_bits.includes("비상정지")).map(a => a.name + "축");
+  const es = $("#bnEstop");
+  es.textContent = `비상정지(STOP) 입력이 활성입니다${stopped.length ? ` (${stopped.join(", ")})` : ""}. 해당 축은 운전 명령이 거부됩니다. 입력을 해제한 뒤 운전 명령을 보내면 래치가 풀립니다(D-072).`;
+  es.classList.toggle("show", s.estop_state !== 0 || s.sys_status.includes("STOP 입력"));
+  const rm = $("#bnRegmap");
+  rm.textContent = `레지스터 맵 버전이 다릅니다 (장치 ${s.regmap_version}, 도구 2). 시험 펌웨어이거나 다른 버전일 수 있어 값이 맞지 않을 수 있습니다.`;
+  rm.classList.toggle("show", !s.regmap_ok);
+  $("#bnUnsaved").classList.toggle("show", !!s.unsaved);
+
+  const box = $("#axes");
+  if (axesBuilt !== s.axes.length) { box.innerHTML = ""; s.axes.forEach(a => box.appendChild(axisCard(a))); axesBuilt = s.axes.length; fillAxisSelect(s); }
+  for (const a of s.axes) {
+    const el = $("#ax" + a.n);
+    const st = $("[data-k=state]", el);
+    st.textContent = a.state_text;
+    st.className = "badge" + (a.state >= 6 ? " bad" : a.busy ? " run" : "");
+    $("[data-k=pos]", el).textContent = fmt(a.position);
+    $("[data-k=upos]", el).textContent = (a.position_unit / 1000).toLocaleString("ko-KR", { minimumFractionDigits: 3 });
+    $("[data-k=spd]", el).textContent = fmt(a.speed);
+    $("[data-k=done]", el).textContent = fmt(a.pulses_done);
+    const hot = new Set(["알람", "비상정지", "+리밋", "−리밋", "드라이브 알람", "위치 무효", "+소프트 리밋", "−소프트 리밋", "통신두절 정지", "언더런"]);
+    const good = new Set(["ready", "서보 ON", "완료", "원점 완료"]);
+    $("[data-k=bits]", el).innerHTML = a.status_bits.map(b => `<span class="chip${hot.has(b) ? " hot" : good.has(b) ? " good" : ""}">${b}</span>`).join("");
+    const al = $("[data-k=alarm]", el);
+    al.classList.toggle("show", a.alarm.code !== 0);
+    if (a.alarm.code) al.innerHTML = `<b>0x${a.alarm.code.toString(16).padStart(4, "0").toUpperCase()} ${a.alarm.name}</b><br>원인: ${a.alarm.cause}<br>조치: ${a.alarm.action}`;
+    $("[data-k=foot]", el).textContent = `마지막 정지 원인: ${a.stop_cause} · 직전 명령 결과: ${a.cmd_result_text} · 완료 누계 ${fmt(a.move_count)}회 · 최고 ${fmt(a.max_rpm)} rpm`;
+  }
+  renderWiring(s.wiring);
+}
+
+function renderWiring(w) {
+  $("#wire").innerHTML = `<p>전체: ${w.ok ? '<span class="ok-t">정상</span>' : '<span class="ng-t">이상</span>'}
+    <span class="note">(wiring_status 0x${w.word.toString(16).padStart(4, "0").toUpperCase()})</span></p><ul>` +
+    w.items.map(i => `<li><span class="${i.ok ? "ok-t" : "ng-t"}">${i.ok ? "정상" : "이상"}</span><span>${i.label}${i.ok ? "" : ` — <span class="note">${i.hint}</span>`}</span></li>`).join("") + "</ul>";
+}
+
+async function poll() {
+  if (!pending) {
+    pending = true;
+    try {
+      const r = await fetch("/api/state");
+      const s = await r.json();
+      if (s.connected === false || !s.axes) throw new Error(s.text || "통신 오류");
+      render(s);
+    } catch (e) {
+      $("#dot").classList.remove("on");
+      $("#connText").textContent = "연결 끊김";
+      const b = $("#bnErr"); b.textContent = `장치와 통신할 수 없습니다: ${e.message}. 자동으로 다시 시도합니다.`; b.classList.add("show");
+    } finally { pending = false; }
+  }
+  setTimeout(poll, 250);
+}
+
+// ---------- global buttons ----------
+$("#stopAll").onclick = async () => {
+  const r = await api("/api/stop_all", {});
+  const b = $("#bnErr"); if (!r.ok) { b.textContent = `전체 정지 결과: ${r.text}`; b.classList.add("show"); }
+};
+document.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
+  const r = await api("/api/save", {});
+  $("#pResult").className = "result " + (r.ok ? "ok" : "bad");
+  $("#pResult").textContent = `설정 저장: ${r.text}`;
+});
+
+// ---------- parameters ----------
+function fillAxisSelect(s) {
+  $("#pAxis").innerHTML = s.axes.map(a => `<option value="${a.n}">${a.name}축</option>`).join("");
+}
+$("#pAxis").onchange = () => loadParams();
+$("#pReload").onclick = () => loadParams();
+async function loadParams() {
+  const n = +($("#pAxis").value || 1);
+  $("#pResult").className = "result"; $("#pResult").textContent = "읽는 중…";
+  const r = await api(`/api/params?axis=${n}`);
+  if (!r.ok) { $("#pResult").className = "result bad"; $("#pResult").textContent = r.text; return; }
+  $("#pBody").innerHTML = r.params.map(p => `<tr><td class="mono">${p.name}</td><td>${LABEL[p.name] || ""}</td>
+    <td><input data-name="${p.name}" data-orig="${p.value}" type="number" step="1" value="${p.value}"
+      ${p.lo !== null ? `min="${p.lo}"` : ""} ${p.hi !== null ? `max="${p.hi}"` : ""}></td>
+    <td class="mono">${p.lo ?? ""}${p.lo !== null || p.hi !== null ? " ~ " : ""}${p.hi ?? ""}</td><td class="mono">${p.default}</td></tr>`).join("");
+  $("#pBody").querySelectorAll("input").forEach(i => i.oninput = markChanged);
+  markChanged();
+  $("#pResult").textContent = "";
+}
+function markChanged() {
+  let n = 0;
+  $("#pBody").querySelectorAll("input").forEach(i => { const c = i.value !== i.dataset.orig; i.classList.toggle("changed", c); n += c; });
+  $("#pApply").disabled = n === 0;
+  $("#pApply").textContent = n ? `변경 적용 (${n})` : "변경 적용";
+}
+$("#pApply").onclick = async () => {
+  const values = {};
+  $("#pBody").querySelectorAll("input.changed").forEach(i => values[i.dataset.name] = +i.value);
+  const r = await api("/api/params", { axis: +$("#pAxis").value, values });
+  $("#pResult").className = "result " + (r.ok ? "ok" : "bad");
+  $("#pResult").textContent = r.ok ? `${r.written}개 적용 완료. 유지하려면 설정 저장을 누르세요.` : r.errors.join(" / ");
+  if (r.ok) loadParams();
+};
+
+poll();
+</script>
+</body>
+</html>
