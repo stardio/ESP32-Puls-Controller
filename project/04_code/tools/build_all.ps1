@@ -14,4 +14,6 @@ Run "$Root\test-fw" "build_off" "sdkconfig.defaults;sdkconfig.tfw_iram_off"
 foreach ($m in "1axis_tcp","1axis_rtu","2axis_tcp","2axis_rtu") {
     Run "$Root\firmware" "build_$m" "sdkconfig.defaults;sdkconfig.model_$m"
 }
+# bench-only build (D-085): bare P4 board, STOP as A contact
+Run "$Root\firmware" "build_2axis_tcp_bench" "sdkconfig.defaults;sdkconfig.model_2axis_tcp;sdkconfig.bench"
 exit $Failed

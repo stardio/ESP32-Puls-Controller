@@ -16,4 +16,7 @@ for m in 1axis_tcp 1axis_rtu 2axis_tcp 2axis_rtu; do
   run idf.py -B "build_$m" -D SDKCONFIG="build_$m/sdkconfig" \
     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.model_$m" set-target esp32p4 build
 done
+# bench-only build (D-085): bare P4 board, STOP as A contact
+run idf.py -B build_2axis_tcp_bench -D SDKCONFIG=build_2axis_tcp_bench/sdkconfig \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.model_2axis_tcp;sdkconfig.bench" set-target esp32p4 build
 exit $FAILED

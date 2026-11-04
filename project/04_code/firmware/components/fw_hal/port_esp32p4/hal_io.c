@@ -251,8 +251,9 @@ static esp_err_t io_init_body(uint8_t axis_count)
     for (uint8_t g = 0; g < axis_count; ++g) {
         fw_es_boot_check(&s_es[g], fw_hal_stop_input(g));
         if (s_es[g].latched) ESP_LOGW(TAG, "axis %u STOP input ACTIVE at boot: latched until released by a START edge", (unsigned)(g + 1));
-        ESP_LOGI(TAG, "axis %u: STOP GPIO%d (active %s, NC contact), START GPIO%d (edge, active %s; -1 = none), fault path %s", (unsigned)(g + 1),
-                 s_stop_gpio[g], stop_low ? "LOW" : "HIGH", s_start_gpio[g], start_low ? "LOW" : "HIGH", s_bound[g] ? "bound" : "NOT bound");
+        ESP_LOGI(TAG, "axis %u: STOP GPIO%d (active %s, %s), START GPIO%d (edge, active %s; -1 = none), fault path %s", (unsigned)(g + 1),
+                 s_stop_gpio[g], stop_low ? "LOW" : "HIGH", stop_low ? "NO contact, BENCH" : "NC contact", s_start_gpio[g],
+                 start_low ? "LOW" : "HIGH", s_bound[g] ? "bound" : "NOT bound");
     }
     if (xTaskCreate(io_task, "fw_io", 3072, NULL, 9, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;

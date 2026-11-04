@@ -1,0 +1,6 @@
+# BENCH ONLY (D-085): bare Waveshare ESP32-P4-ETH board without carrier. NOT for products.
+# STOP becomes an A contact (NO): active LOW with the internal pull-up, so an unconnected STOP pin reads "not stopped".
+# Shorting GPIO19 (X) or GPIO8 (Y) to GND still stops that axis through the MCPWM hardware fault path.
+# Build: idf.py -B build_2axis_tcp_bench -D SDKCONFIG=build_2axis_tcp_bench/sdkconfig
+#        -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.model_2axis_tcp;sdkconfig.bench" set-target esp32p4 build
+CONFIG_FW_STOP_ACTIVE_LOW=y

@@ -91,6 +91,7 @@
 | D-082 | 2026-11-01 | 사실 기록: LS L7S CN1 펄스 입력 PF+ 9/PF− 10, PR+ 11/PR− 12, 서보 ON SVON 47(입력 공통 +24VIN 50). EMG 18·STOP 48·CWLIM 19·CCWLIM 20 처리 필요. 펄스+부호 모드에서 PR = 부호는 [추정]. 허용 주파수와 파라미터 번호는 미확인 | 사용자 제공 CN1 결선도 | ③ 사용자 자료 |
 | D-083 | 2026-11-01 | 사실 기록(웹 발췌, 원문 대조 전): 미쓰비시 MR-J3-□A와 LS L7S의 차동 지령 펄스 입력 상한은 1 Mpps(오픈컬렉터 200 kpps). MR-J3-A 펄스+부호 설정은 PA13 = 0001h(정논리)/0011h(부논리). L7S 펄스 형태 파라미터 번호와 두 기종의 입력 자동 ON 자리값은 미확인 | 03_design/hmi/wiring-cards.md 「웹 조사 보강」 출처 목록 | ③ 웹 조사 |
 | D-084 | 2026-11-04 | 사실 기록 + [권고 기본값]: 시험 보드(Waveshare ESP32-P4-ETH)의 칩은 ESP32-P4 **리비전 v1.3**이다(R-20 해소). v3.x와 하드웨어 비호환이므로 test-fw·firmware의 sdkconfig.defaults를 `ESP32P4_SELECTS_REV_LESS_V3=y`, 최소 리비전 v1.0, CPU **360 MHz**로 바꾼다(400 MHz 강제 옵션은 쓰지 않음). 400 MHz 전제 문구(architecture M3, D-024 근거)는 360 MHz로 읽는다. 양산 칩(P4NRW32 v1.3 단종 통지 PCN202600801 대상)과 v3.x 전환 여부는 G3에서 함께 판단한다(I-043 연동) | esptool chip 확인·부팅 로그(chip revision v1.3, cpu 360 MHz), ESP-IDF v5.5.3 Kconfig.hw_support | ④ 규칙 9 |
+| D-085 | 2026-11-04 | 벤치 시험 전용 빌드: 캐리어 없이 P4 보드만으로 시험할 때 STOP B접점(NC) 판정을 해제하고 두 축을 같은 로직으로 운전한다. 방법은 기존 Kconfig `FW_STOP_ACTIVE_LOW=y`를 켜는 `firmware/sdkconfig.bench`(빌드 `build_2axis_tcp_bench`): STOP = A접점(LOW 활성, 내부 풀업), GPIO19·GPIO8을 GND에 대면 해당 축 정지(MCPWM fault 경로 유지). **제품 빌드 기본값(NC, HIGH 활성)은 바꾸지 않는다.** 원인 기록: 보드 단독에서 GPIO8은 내부 풀다운에도 HIGH로 읽혀 Y축이 비상정지 래치됨(외부 구동 원인 미확인) | 사용자 지시. 실보드 확인: 부팅 시 두 축 STOP 비활성, X·Y 각 100 pulse 이동 완료 | ④ 사용자 지시 |
 
 ## 미확인 항목
 
