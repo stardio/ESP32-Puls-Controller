@@ -225,7 +225,7 @@ async function send(n, cmd, operands) {
     res.className = "result " + (r.ok ? "ok" : "bad");
     res.textContent = `${cmd}: ${r.text}`;
     return r;
-  } catch (e) { res.className = "result bad"; res.textContent = `${cmd}: 웹 서버 응답 없음`; }
+  } catch (e) { res.className = "result bad"; res.textContent = `${cmd}: 웹 서버 응답 없음 — PC에서 svtool web이 실행 중인지 확인하세요`; }
 }
 
 // Hold-to-run: resend TEST_POS/NEG every 200 ms (firmware keepalive 500 ms). Any release path stops it.
@@ -297,7 +297,9 @@ async function poll() {
   if (!pending) {
     pending = true;
     try {
-      const r = await fetch("/api/state");
+      let r;
+      try { r = await fetch("/api/state"); }
+      catch (e) { throw new Error("PC의 웹 서버(svtool web)가 꺼져 있습니다. 명령줄에서 다시 실행하세요"); }
       const s = await r.json();
       if (s.connected === false || !s.axes) throw new Error(s.text || "통신 오류");
       render(s);
