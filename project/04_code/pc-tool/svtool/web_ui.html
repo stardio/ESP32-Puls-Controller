@@ -110,7 +110,19 @@ td input { max-width: 180px; }
 </nav>
 
 <main>
-  <section class="tab active" id="tab-run"><div class="axes" id="axes"></div></section>
+  <section class="tab active" id="tab-run">
+    <fieldset id="syncBox" style="margin-bottom:14px; display:none">
+      <legend>X·Y 동시 운전 — 각 축 카드의 목표 pulse·속도·가감속 값으로 두 축을 같은 제어 주기(1 ms)에 시작</legend>
+      <div class="row">
+        <select id="syncMode" style="width:auto"><option value="REL">상대</option><option value="ABS">절대</option></select>
+        <button class="primary" id="syncStart">▶ 동시 START</button>
+        <button class="danger" id="syncStop">■ 동시 STOP</button>
+        <span class="result" id="syncRes"></span>
+      </div>
+      <p class="note" style="margin:6px 0 0">한 축이라도 시작할 수 없으면 두 축 모두 시작하지 않습니다. 외부 입력: DI3(GPIO18) = 동시 START(상대), DI4(GPIO17) = 동시 STOP(감속). 동시 STOP은 안전 비상정지가 아닙니다.</p>
+    </fieldset>
+    <div class="axes" id="axes"></div>
+  </section>
 
   <section class="tab" id="tab-params">
     <div class="toolbar">
@@ -312,6 +324,7 @@ function render(s) {
 
   const box = $("#axes");
   if (axesBuilt !== s.axes.length) { box.innerHTML = ""; s.axes.forEach(a => box.appendChild(axisCard(a))); axesBuilt = s.axes.length; fillAxisSelect(s); }
+  $("#syncBox").style.display = s.axes.length >= 2 ? "" : "none";             /* 1-axis model: no simultaneous panel */
   for (const a of s.axes) {
     const el = $("#ax" + a.n);
     const st = $("[data-k=state]", el);
@@ -356,6 +369,24 @@ async function poll() {
   }
   setTimeout(poll, 250);
 }
+
+// ---------- X/Y simultaneous (D-088) ----------
+function axisOperands(n) {
+  const el = $("#ax" + n), acc = +$("[data-op=acc]", el).value;
+  return { target: +$("[data-op=target]", el).value, speed: +$("[data-op=speed]", el).value, accel_ms: acc, decel_ms: acc };
+}
+async function syncSend(cmd) {
+  const out = $("#syncRes");
+  out.className = "result"; out.textContent = `동시 ${cmd} 전송 중…`;
+  const operands = {};
+  if (cmd === "START") (state?.axes || []).forEach(a => operands[a.n] = axisOperands(a.n));
+  try {
+    const r = await api("/api/sync", { cmd, mode: $("#syncMode").value, operands });
+    out.className = "result " + (r.ok ? "ok" : "bad"); out.textContent = `동시 ${cmd}: ${r.text}`;
+  } catch (e) { out.className = "result bad"; out.textContent = `동시 ${cmd}: 웹 서버 응답 없음 — PC에서 svtool web이 실행 중인지 확인하세요`; }
+}
+$("#syncStart").onclick = () => syncSend("START");
+$("#syncStop").onclick = () => syncSend("STOP");
 
 // ---------- global buttons ----------
 $("#stopAll").onclick = async () => {

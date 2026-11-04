@@ -169,7 +169,7 @@ static void test_system_cfg_and_commands(void)
     CHECK_EQ(wr1(0x112, 2), 3); CHECK_EQ(wr1(0x110, 2), 3);
     CHECK_EQ(wr1(0x100, FW_SYS_SAVE), 0); CHECK_EQ(R.last_sys, FW_SYS_SAVE);
     CHECK_EQ(wr1(0x100, FW_SYS_STOP_ALL), 0); CHECK_EQ(R.last_sys, FW_SYS_STOP_ALL);
-    CHECK_EQ(wr1(0x100, 9), 3); CHECK_EQ(wr1(0x100, 0x100), 3);        /* 0x100 is internal, not writable here */ /* 7, 8 = FACTORY_RESET, NET_RESET since 5.12 */
+    CHECK_EQ(wr1(0x100, 11), 3); CHECK_EQ(wr1(0x100, 9), 0); CHECK_EQ(wr1(0x100, 10), 0); CHECK_EQ(wr1(0x100, 0x100), 3);        /* 0x100 is internal, not writable here */ /* 7, 8 = FACTORY_RESET, NET_RESET since 5.12; 9, 10 = START_ALL_REL/ABS (D-088) */
     CHECK_EQ(reg(0x100), 0);                                            /* sys_command reads 0 */
     CHECK_EQ(wr1(0x101, 0), 2);                                         /* sys_cmd_result read-only */
     /* unlock key with a 10 s window */

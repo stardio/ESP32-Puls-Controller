@@ -529,8 +529,42 @@ class Sim:
         elif cmd == R.CMD_STOP_ALL:
             for ax in self.axes:
                 self._begin_stop(ax, 2)
+        elif cmd in (R.CMD_START_ALL_REL, R.CMD_START_ALL_ABS):
+            return self._start_all(cmd == R.CMD_START_ALL_ABS)
         else:
             return R.RESULT_REFUSED
+        return R.RESULT_OK
+
+    def _start_check(self, ax, absolute):
+        """Side-effect-free part of the start checks (firmware fw_axis_start_check, D-088)."""
+        if self.stop_active:
+            return R.CR_ESTOP
+        if ax.alarm:
+            return R.CR_ALARM
+        if ax.running:
+            return R.CR_RUNNING
+        if self.p(ax.n, 0x129) == 1 and not ax.servo_on:
+            return R.CR_SVOFF
+        if not absolute and self._get(self.fields[R.AXIS_BASE[ax.n] + R.A_TARGET][0]) == 0:
+            return R.CR_RANGE
+        return R.CR_OK
+
+    def _start_all(self, absolute):
+        """D-088: start every axis from its operand registers, all-or-nothing (firmware start_all)."""
+        refused = False
+        for ax in self.axes:
+            r = self._start_check(ax, absolute)
+            if r != R.CR_OK:
+                ax.cmd_result = r
+                refused = True
+        if refused:
+            return R.RESULT_REFUSED
+        for i, ax in enumerate(self.axes):
+            self._axis_cmd(ax, 1 if absolute else 2)
+            if ax.cmd_result != R.CR_OK:
+                for b in self.axes[:i]:
+                    self._finish(b, 3, False)
+                return R.RESULT_REFUSED
         return R.RESULT_OK
 
     # ---- axis commands -------------------------------------------------------------

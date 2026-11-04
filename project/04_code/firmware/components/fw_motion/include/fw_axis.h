@@ -35,6 +35,7 @@ void    fw_axis_init(fw_axis_t *a, fw_dev_t *dev, uint8_t idx, uint32_t res_hz);
  * committed, review M-03 / R3-M1). A TEST keepalive of a moving axis stays allowed (it only extends a running move). */
 uint8_t fw_axis_command_gated(fw_axis_t *a, uint16_t cmd, bool start_blocked);
 uint8_t fw_axis_command(fw_axis_t *a, uint16_t cmd);        /* axis_command semantic, returns/stores cmd_result */
+uint8_t fw_axis_start_check(const fw_axis_t *a, bool absolute);   /* D-088: START_ABS/REL pre-check, no side effect */
 uint8_t fw_axis_start_legacy(fw_axis_t *a);                 /* coil 0: relative move from the legacy values (axis X) */
 uint8_t fw_axis_start_physical(fw_axis_t *a);               /* START edge: X = legacy start, Y = START_REL from target_position */
 void    fw_axis_legacy_reset(fw_axis_t *a);                 /* coil 2 extra: current value, result, fault := 0 */

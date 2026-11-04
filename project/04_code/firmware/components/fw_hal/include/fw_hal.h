@@ -52,6 +52,8 @@ int      fw_hal_stop_release(uint8_t axis);
 bool     fw_hal_fault_bound(uint8_t axis);                   /* MCPWM fault path (D-070 path B) of this axis configured */
 /* called from the watch task after an accepted START edge (latch already released); must not block */
 void     fw_hal_set_start_cb(void (*cb)(uint8_t axis));
+/* D-088: external X/Y simultaneous START (start = true) / STOP (false) edge from a spare DI; must not block */
+void     fw_hal_set_sync_cb(void (*cb)(bool start));
 
 /* ---- system ---- */
 uint32_t fw_hal_ms(void);                                    /* monotonic ms */

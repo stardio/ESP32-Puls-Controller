@@ -220,6 +220,21 @@ static uint8_t cmd_test(fw_axis_t *a, bool forward)
     return r;
 }
 
+/* D-088: side-effect-free part of the start checks (start_move, cmd_start_with) for the X/Y simultaneous start.
+ * Speed/tick limits are checked by the real start; the caller rolls back if that one fails. */
+uint8_t fw_axis_start_check(const fw_axis_t *a, bool absolute)
+{
+    const uint16_t *op = OP(a);
+    if (!engine_allowed(a)) return FW_RES_ALARM;
+    if (fw_hal_stop_input(a->idx) || (fw_hal_stop_blocking(a->idx) && !fw_hal_stop_latched(a->idx))) return FW_RES_ESTOP;
+    if (a->sticky_alarm != FW_AL_NONE) return FW_RES_ALARM;
+    if (a->mv != MV_IDLE) return FW_RES_RUNNING;
+    if (PAR(a)[FW_P_SVON_MODE] == 1 && !a->dev->ax[a->idx].servo_manual) return FW_RES_SERVO_OFF;
+    if (absolute && !a->pos_valid && PAR(a)[FW_P_REQUIRE_HOME]) return FW_RES_POS_INVALID;
+    if (!absolute && (int32_t)fw_w32(op, FW_O_TARGET) == 0) return FW_RES_RANGE;
+    return FW_RES_OK;
+}
+
 uint8_t fw_axis_start_legacy(fw_axis_t *a)
 {
     const uint32_t pulses = fw_w32(a->dev->cfg.leg, 0);

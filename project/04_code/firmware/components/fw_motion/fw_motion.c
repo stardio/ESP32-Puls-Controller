@@ -17,6 +17,7 @@ static SemaphoreHandle_t s_lock;
 static fw_save_t s_save;
 static fw_commloss_t s_cl;
 static volatile uint8_t s_start_pending;
+static volatile uint8_t s_sync_pending;          /* D-088: b0 simultaneous START, b1 simultaneous STOP */
 static bool s_saving, s_reboot_req, s_reboot_commit, s_cl_tripped;   /* s_saving / s_reboot_commit: set under the lock, no START */
 static uint32_t s_reboot_at_ms;
 static uint32_t s_hb_ms;
@@ -71,6 +72,27 @@ static void op_legacy_reset(void *ctx) { (void)ctx; fw_axis_legacy_reset(&s_ax[0
 static void op_user_do(void *ctx, uint16_t mask) { (void)ctx; fw_hal_user_do_set(mask); }
 static void op_cfg_changed(void *ctx) { (void)ctx; fw_save_note_write(&s_save, fw_hal_ms()); }
 
+/* D-088: X/Y simultaneous start from each axis's operand registers (target_position, move_speed, accel, decel).
+ * All-or-nothing: if any axis fails the pre-check nothing starts; if a real start then fails, the axes already
+ * started in this pass are quick-stopped. Both starts happen in the same motion-task pass (under the lock). */
+static uint16_t start_all(bool absolute)
+{
+    if (start_blocked()) return FW_SRES_AXIS_RUNNING;
+    bool ok = true;
+    for (unsigned a = 0; a < s_dev.axis_count; ++a) {
+        const uint8_t r = fw_axis_start_check(&s_ax[a], absolute);
+        if (r != FW_RES_OK) { s_dev.ax[a].cmd_result = r; ok = false; }
+    }
+    if (!ok) return FW_SRES_REFUSED;
+    const uint16_t cmd = absolute ? FW_CMD_START_ABS : FW_CMD_START_REL;
+    for (unsigned a = 0; a < s_dev.axis_count; ++a) {
+        if (fw_axis_command(&s_ax[a], cmd) == FW_RES_OK) continue;
+        for (unsigned b = 0; b < a; ++b) fw_axis_command(&s_ax[b], FW_CMD_QUICK_STOP);
+        return FW_SRES_REFUSED;
+    }
+    return FW_SRES_OK;
+}
+
 static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
 {
     (void)ctx;
@@ -110,12 +132,17 @@ static uint16_t op_sys_cmd(void *ctx, uint16_t cmd)
     case FW_SYS_STOP_ALL:
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_command(&s_ax[a], FW_CMD_STOP);
         return FW_SRES_OK;
+    case FW_SYS_START_ALL_REL:
+    case FW_SYS_START_ALL_ABS:
+        return start_all(cmd == FW_SYS_START_ALL_ABS);
     default: return FW_SRES_REFUSED;
     }
 }
 
 /* ------------------------------------------------------------------ START edge from the HAL watch task */
 static void on_start_edge(uint8_t axis) { __atomic_fetch_or(&s_start_pending, (uint8_t)(1u << axis), __ATOMIC_SEQ_CST); }
+/* D-088: external X/Y simultaneous START (bit 0) / STOP (bit 1) edges, handled in the next motion-task pass */
+static void on_sync_edge(bool start) { __atomic_fetch_or(&s_sync_pending, (uint8_t)(start ? 1u : 2u), __ATOMIC_SEQ_CST); }
 
 /* ------------------------------------------------------------------ save
  * Called after motion_task set s_saving under the lock (save_now) or, for the reboot path, with s_reboot_commit set. */
@@ -201,6 +228,12 @@ static void motion_task(void *arg)
             else fw_axis_start_physical(&s_ax[a]);
         }
         if (keep) __atomic_fetch_or(&s_start_pending, keep, __ATOMIC_SEQ_CST);
+        const uint8_t sync = __atomic_exchange_n(&s_sync_pending, 0, __ATOMIC_SEQ_CST);
+        if (sync & 2u) s_dev.sys_cmd_result = op_sys_cmd(NULL, FW_SYS_STOP_ALL);          /* STOP wins over START */
+        else if (sync & 1u) {
+            if (start_blocked()) __atomic_fetch_or(&s_sync_pending, 1u, __ATOMIC_SEQ_CST);   /* retried after the save */
+            else s_dev.sys_cmd_result = start_all(false);                              /* external input: relative */
+        }
         for (unsigned a = 0; a < s_dev.axis_count; ++a) fw_axis_poll(&s_ax[a]);
 
         const uint16_t *sys = s_dev.cfg.sys;
@@ -309,6 +342,7 @@ int fw_motion_start(const fw_motion_cfg_t *c)
         if (fw_hal_pulse_ready((uint8_t)a)) s_dev.boot_status |= (a == 0 ? FW_BOOT_PULSE_X : FW_BOOT_PULSE_Y);
     if (pe != 0) ESP_LOGE(TAG, "pulse engine init error 0x%x", (unsigned)pe);
     fw_hal_set_start_cb(on_start_edge);                                    /* m-04: before the io task exists */
+    fw_hal_set_sync_cb(on_sync_edge);                                      /* D-088 */
     if (fw_hal_io_init(c->axis_count) == 0) s_dev.boot_status |= FW_BOOT_STOP_IO;
     else ESP_LOGE(TAG, "STOP/START input init FAILED: operation prohibited");
     for (unsigned a = 0; a < c->axis_count; ++a) {                         /* M-06: fault path of each axis */

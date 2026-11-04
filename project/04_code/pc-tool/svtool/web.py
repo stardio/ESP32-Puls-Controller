@@ -49,8 +49,8 @@ PIN_TABLE = [
     ("FW_OE_GPIO", 33, "펄스 출력", "펄스 출력 허용 (두 축 공용)", "출력", "HIGH = 허용, 부팅 시 LOW (TLP2361 → AM26C31 /G)", "–"),
     ("FW_X_START_GPIO", 54, "입력", "X축 START (DI1)", "입력", "엣지 동작, LOW 활성", "J15 D/I(X)"),
     ("FW_X_STOP_GPIO", 19, "입력", "X축 STOP (DI2)", "입력", "NC 접점, HIGH 활성 = 정지. MCPWM 하드웨어 차단 경로", "J15 D/I(X)"),
-    ("FW_X_DI3_GPIO", 18, "입력", "X축 예비 DI3 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J15 D/I(X)"),
-    ("FW_X_DI4_GPIO", 17, "입력", "X축 예비 DI4 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J15 D/I(X)"),
+    ("FW_X_DI3_GPIO", 18, "입력", "X·Y 동시 START (DI3)", "입력", "엣지 동작, LOW 활성. 두 축 상대 이동 동시 시작(한 축이라도 불가면 둘 다 안 함), D-088", "J15 D/I(X)"),
+    ("FW_X_DI4_GPIO", 17, "입력", "X·Y 동시 STOP (DI4)", "입력", "엣지 동작, LOW 활성. 두 축 감속 정지(안전 비상정지 아님), D-088", "J15 D/I(X)"),
     ("FW_Y_START_GPIO", 7, "입력", "Y축 START (DI5)", "입력", "엣지 동작, LOW 활성", "J16 D/I(Y)"),
     ("FW_Y_STOP_GPIO", 8, "입력", "Y축 STOP (DI6)", "입력", "NC 접점, HIGH 활성 = 정지. 미배선이면 정지 상태로 읽힘", "J16 D/I(Y)"),
     ("FW_Y_DI7_GPIO", 15, "입력", "Y축 예비 DI7 (원점·리밋용)", "입력", "LOW 활성, 레지스터로만 읽음", "J16 D/I(Y)"),
@@ -238,6 +238,39 @@ class Bridge:
         res = self.call(go)
         return {"ok": res in (R.CR_OK, 1), "result": res, "text": CMD_RESULT.get(res, f"0x{res:02X}")}
 
+    def sync_command(self, cmd, absolute=False, operands=None):
+        """D-088: X/Y simultaneous START (writes each axis's operands, then START_ALL_REL/ABS) or STOP (STOP_ALL)."""
+        if cmd == "STOP":
+            return self.sys_command(R.CMD_STOP_ALL)
+        if cmd != "START":
+            return {"ok": False, "text": "허용되지 않은 명령"}
+        writes = []
+        for key, op in (operands or {}).items():
+            n = int(key)
+            if n not in (1, 2):
+                return {"ok": False, "text": f"축 번호 {key} 오류"}
+            rt = {f.name.split(".", 1)[1]: f for f in R.axis_runtime_fields(n)}
+            for k, fname in (("target", "target_position"), ("speed", "move_speed"), ("accel_ms", "accel_time_ms"),
+                             ("decel_ms", "decel_time_ms")):
+                if k not in op:
+                    continue
+                f, v = rt[fname], int(op[k])
+                if (f.lo is not None and v < f.lo) or (f.hi is not None and v > f.hi):
+                    return {"ok": False, "text": f"{'XY'[n - 1]}축 {k}: 범위 {f.lo}~{f.hi} 밖"}
+                writes.append((f, v))
+
+        def go(dev):
+            for f, v in writes:
+                dev.write(f, v)
+            res = dev.sys_command(R.CMD_START_ALL_ABS if absolute else R.CMD_START_ALL_REL)
+            axes = [dev.read_words(R.AXIS_BASE[n] + R.A_CMDRES, 1)[0] for n in range(1, min(self.ident["axis_count"], 2) + 1)]
+            return res, axes
+        res, axes = self.call(go)
+        text = B.RESULT_TEXT.get(res, f"0x{res:02X}")
+        if res != R.RESULT_OK:
+            text += " — " + ", ".join(f"{'XY'[i]}축 {CMD_RESULT.get(c, f'0x{c:02X}')}" for i, c in enumerate(axes))
+        return {"ok": res == R.RESULT_OK, "result": res, "text": text}
+
     def backup(self):
         return self.call(lambda dev: B.make_backup(dev, self.target))
 
@@ -314,6 +347,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._guard(lambda: (200, self.bridge.write_params(int(body.get("axis", 0)), body.get("values") or {})))
         if path == "/api/save":
             return self._guard(lambda: (200, self.bridge.sys_command(R.CMD_SAVE)))
+        if path == "/api/sync":
+            return self._guard(lambda: (200, self.bridge.sync_command(str(body.get("cmd")), body.get("mode") == "ABS",
+                                                                      body.get("operands"))))
         if path == "/api/stop_all":
             return self._guard(lambda: (200, self.bridge.sys_command(R.CMD_STOP_ALL)))
         return self._send(404, {"ok": False, "text": "없는 경로"})

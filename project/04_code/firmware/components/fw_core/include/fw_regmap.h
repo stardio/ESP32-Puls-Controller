@@ -32,7 +32,9 @@ enum { FW_RES_OK = 0, FW_RES_BUSY_RUN = 1, FW_RES_ESTOP = 0x10, FW_RES_ALARM = 0
        FW_RES_RANGE = 0x17 };
 /* sys_command (0x0100) / sys_cmd_result (0x0101) */
 enum { FW_SYS_ESTOP_RELEASE = 1, FW_SYS_SAVE = 2, FW_SYS_LOAD_DEFAULT = 3, FW_SYS_REBOOT = 4, FW_SYS_CLEAR_HIST = 5,
-       FW_SYS_STOP_ALL = 6, FW_SYS_FACTORY_RESET = 7, FW_SYS_NET_RESET = 8, FW_SYS_NET_APPLY = 0x100 /* internal: write of 0x400F */ };
+       FW_SYS_STOP_ALL = 6, FW_SYS_FACTORY_RESET = 7, FW_SYS_NET_RESET = 8,
+       FW_SYS_START_ALL_REL = 9, FW_SYS_START_ALL_ABS = 10,   /* D-088: both axes in one 1 ms pass, all-or-nothing */
+       FW_SYS_LAST = FW_SYS_START_ALL_ABS, FW_SYS_NET_APPLY = 0x100 /* internal: write of 0x400F */ };
 enum { FW_SRES_OK = 0, FW_SRES_RUNNING_CMD = 1, FW_SRES_REFUSED = 0x10, FW_SRES_LOCKED = 0x11, FW_SRES_AXIS_RUNNING = 0x12 };
 /* axis_state */
 enum { FW_AS_SERVO_OFF = 0, FW_AS_IDLE = 1, FW_AS_POSITIONING = 2, FW_AS_JOG = 3, FW_AS_HOME = 4, FW_AS_DECEL_STOP = 5,

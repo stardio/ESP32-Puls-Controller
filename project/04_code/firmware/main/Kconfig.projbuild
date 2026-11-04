@@ -79,6 +79,14 @@ menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
         int "START stable time before an edge is accepted (ms) [recommended 5]"
         range 1 100
         default 5
+    config FW_SYNC_START_DI
+        int "X/Y simultaneous START input: spare DI number 3/4/7/8, 0 = off (D-088). Starts both axes, relative, from the operand registers"
+        range 0 8
+        default 3
+    config FW_SYNC_STOP_DI
+        int "X/Y simultaneous STOP input: spare DI number 3/4/7/8, 0 = off (D-088). Decelerates both axes (STOP_ALL); not a safety stop"
+        range 0 8
+        default 4
 
     config FW_DO1_GPIO
         int "DO1 servo ON X"

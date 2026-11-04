@@ -268,7 +268,7 @@ PULSE ____________________________|‾|_|‾|_|‾|_ ...      (첫 펄스는 방
 | 0x002A | heartbeat | U16 | R | 0~65535 순환 | 100 ms마다 +1 [가정]. HMI 통신 생존 표시 | FR-023(a) |
 | 0x002B | sys_inputs | BITS16 | R | b0 ESTOP 입력(원시), b1 게이트 되읽기 | 공통 입력 상태 | FR-021 |
 | 0x0030 | alarm_axis_mask | BITS16 | R | b0 축1, b1 축2 | 알람 있는 축 | FR-011 |
-| 0x0100 | sys_command | U16 | W(읽기 시 0) | 1 ESTOP_RELEASE, 2 SAVE, 3 LOAD_DEFAULT(전체, 잠금 필요), 4 REBOOT(잠금 필요), 5 CLEAR_ALARM_HISTORY, 6 STOP_ALL(전 축 감속 정지) | 시스템 명령 | FR-010, FR-015, FR-021 |
+| 0x0100 | sys_command | U16 | W(읽기 시 0) | 1 ESTOP_RELEASE, 2 SAVE, 3 LOAD_DEFAULT(전체, 잠금 필요), 4 REBOOT(잠금 필요), 5 CLEAR_ALARM_HISTORY, 6 STOP_ALL(전 축 감속 정지), 7 FACTORY_RESET, 8 NET_RESET(§5.12), **9 START_ALL_REL, 10 START_ALL_ABS**(D-088: 각 축 운전 조작 레지스터 target_position·move_speed·accel·decel로 두 축을 같은 1 ms 주기에 시작. 한 축이라도 사전 점검에서 거부되면 모두 시작 안 함, 결과 0x10 + 해당 축 cmd_result에 사유. 실제 시작이 실패하면 먼저 시작한 축은 즉시 정지) | 시스템 명령 | FR-010, FR-015, FR-021 |
 | 0x0101 | sys_cmd_result | U16 | R | 0 성공, 1 실행 중, 0x10 거부: 조건 불충족(예: 비상정지 입력 활성 중 해제), 0x11 거부: 잠금, 0x12 거부: 축 운전 중 | 직전 명령 결과 | FR-010 |
 | 0x0102 | unlock_key | U16 | W | 고정 키값 [가정] 쓰기 후 10 s 동안 잠금 명령 허용 | 오조작 방지 | — |
 | 0x0110 | commloss_enable | U16 | R/W·저장 | 0/1 | 통신두절 감속 정지 사용 | FR-012 |

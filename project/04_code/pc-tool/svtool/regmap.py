@@ -22,6 +22,7 @@ HIST_COUNT, HIST_BASE = 0x3000, 0x3010
 # sys_command values. 1..6 per spec 5.3; 7/8 FACTORY_RESET/NET_RESET: numbers fixed by spec 5.12 (implementation-confirmed table).
 CMD_ESTOP_RELEASE, CMD_SAVE, CMD_LOAD_DEFAULT, CMD_REBOOT, CMD_CLEAR_HIST, CMD_STOP_ALL = 1, 2, 3, 4, 5, 6
 CMD_FACTORY_RESET, CMD_NET_RESET = 7, 8
+CMD_START_ALL_REL, CMD_START_ALL_ABS = 9, 10    # D-088: X/Y simultaneous start, all-or-nothing
 RESULT_OK, RESULT_BUSY, RESULT_REFUSED, RESULT_LOCKED, RESULT_RUNNING = 0, 1, 0x10, 0x11, 0x12
 
 # axis_command values (5.5 + 5.12)

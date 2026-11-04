@@ -89,6 +89,40 @@ def test_position_reset_to_zero(web, sim):
     assert state(web)["axes"][0]["position"] == 0
 
 
+def test_sync_start_both_axes(web, sim):
+    ops = {"1": {"target": 1000, "speed": 10000}, "2": {"target": -2000, "speed": 10000}}
+    _, r = post(web + "/api/sync", {"cmd": "START", "mode": "REL", "operands": ops})
+    assert r["ok"], r
+    s = state(web)
+    assert s["axes"][0]["busy"] and s["axes"][1]["busy"]          # both started by the same command
+    sim.clock.advance(2.0)
+    s = state(web)
+    assert (s["axes"][0]["position"], s["axes"][1]["position"]) == (1000, -2000)
+
+
+def test_sync_start_all_or_nothing(web, sim):
+    post(web + "/api/axis", {"axis": 2, "cmd": "START_REL", "operands": {"target": 10 ** 6, "speed": 1000}})
+    ops = {"1": {"target": 1000, "speed": 10000}, "2": {"target": 1000, "speed": 10000}}
+    _, r = post(web + "/api/sync", {"cmd": "START", "mode": "REL", "operands": ops})
+    assert not r["ok"] and "Y축 거부: 운전 중" in r["text"]
+    assert not state(web)["axes"][0]["busy"]                       # X did not start alone
+
+
+def test_sync_stop(web, sim):
+    ops = {"1": {"target": 10 ** 6, "speed": 1000}, "2": {"target": 10 ** 6, "speed": 1000}}
+    post(web + "/api/sync", {"cmd": "START", "mode": "REL", "operands": ops})
+    _, r = post(web + "/api/sync", {"cmd": "STOP"})
+    assert r["ok"], r
+    sim.clock.advance(2.0)
+    s = state(web)
+    assert not s["axes"][0]["busy"] and not s["axes"][1]["busy"]
+
+
+def test_sync_rel_zero_target_refused(web):
+    _, r = post(web + "/api/sync", {"cmd": "START", "mode": "REL", "operands": {"1": {"target": 0}, "2": {"target": 5}}})
+    assert not r["ok"] and "X축 거부: 값 범위" in r["text"]
+
+
 def test_operand_range_checked(web):
     _, r = post(web + "/api/axis", {"axis": 1, "cmd": "START_REL", "operands": {"target": 1, "speed": 10, "accel_ms": 5}})
     assert not r["ok"] and "accel_ms" in r["text"]

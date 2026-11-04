@@ -402,7 +402,7 @@ static int write_regs(fw_dev_t *d, unsigned addr, unsigned count, const uint16_t
             axcmd[t.axis] = w0; axcmd_v[t.axis] = w0 != 0;
             break;
         case W_SYSCMD:
-            if (w0 != 0 && (w0 > FW_SYS_NET_RESET)) return 3;
+            if (w0 != 0 && (w0 > FW_SYS_LAST)) return 3;
             syscmd = w0; syscmd_v = w0 != 0;
             break;
         case W_SETUP: if (w0 > 1u) return 3; cand.setup_done = w0; break;

@@ -26,6 +26,9 @@ static fw_start_t s_st[NAX];
 static int s_stop_gpio[NAX] = {-1, -1};
 static int s_start_gpio[NAX] = {-1, -1};
 static int s_spare_gpio[4] = {-1, -1, -1, -1};       /* DI3, DI4 (X), DI7, DI8 (Y) */
+static int s_sync_gpio[2] = {-1, -1};                /* D-088: simultaneous START, STOP (one of the spare DIs or -1) */
+static fw_start_t s_sync_st[2];
+static void (*s_sync_cb)(bool start);
 static mcpwm_fault_handle_t s_fault[NAX];
 static bool s_bound[NAX];
 static volatile bool s_init_ok;                      /* N-02: motion refused until init completed */
@@ -95,6 +98,19 @@ uint16_t fw_hal_stop_state(uint8_t axis)
 }
 uint16_t fw_hal_stop_trips(uint8_t axis) { return axis < NAX ? s_es[axis].trip_count : 0; }
 void fw_hal_set_start_cb(void (*cb)(uint8_t axis)) { s_start_cb = cb; }
+void fw_hal_set_sync_cb(void (*cb)(bool start)) { s_sync_cb = cb; }
+
+/* D-088: Kconfig DI number (3, 4, 7, 8; 0 = off) -> spare DI GPIO, or -1 */
+static int spare_for_di(int di)
+{
+    switch (di) {
+    case 3: return s_spare_gpio[0];
+    case 4: return s_spare_gpio[1];
+    case 7: return s_spare_gpio[2];
+    case 8: return s_spare_gpio[3];
+    default: return -1;
+    }
+}
 
 /* ISR (IRAM): the latch is set BEFORE the stop so that a task that starts the axis at this moment sees it when it
  * re-checks after its timer start (N-03). fw_es_trip is always_inline: compiled into this IRAM function (M-01).
@@ -158,6 +174,13 @@ static void poll_once(void)
         if (was_latched && !s_es[ax].latched && !release_hw(ax)) { relatch(ax); fire = false; }   /* START edge released the latch */
         if (s_es[ax].latched && fw_hal_pulse_active(ax)) fw_hal_pulse_stop(ax);   /* a latched axis never keeps running */
         if (fire && s_start_cb) s_start_cb(ax);
+    }
+    /* D-088: simultaneous START / STOP edges (debounced like START). The STOP latch of each axis is still released
+     * only by the start itself (start_move, D-072), so stop_active = false here. */
+    for (unsigned i = 0; i < 2; ++i) {
+        if (s_sync_gpio[i] < 0) continue;
+        const bool raw = level_active(s_sync_gpio[i], FW_B_START_ACTIVE_LOW != 0);
+        if (fw_start_sample(&s_sync_st[i], raw, false, 1, CONFIG_FW_START_DEBOUNCE_MS) && s_sync_cb) s_sync_cb(i == 0);
     }
 }
 
@@ -246,6 +269,13 @@ static esp_err_t io_init_body(uint8_t axis_count)
     }
     for (unsigned i = 0; i < 4; ++i)
         if (s_spare_gpio[i] >= 0) { e = in_cfg(s_spare_gpio[i], start_low, GPIO_INTR_DISABLE); if (e != ESP_OK) return e; }
+    /* D-088: X/Y simultaneous START / STOP on spare DIs (Kconfig DI number, 0 = off); same polarity and debounce as START */
+    s_sync_gpio[0] = spare_for_di(CONFIG_FW_SYNC_START_DI);
+    s_sync_gpio[1] = spare_for_di(CONFIG_FW_SYNC_STOP_DI);
+    for (unsigned i = 0; i < 2; ++i)
+        fw_start_init(&s_sync_st[i], s_sync_gpio[i] >= 0 && level_active(s_sync_gpio[i], start_low));   /* held at boot: not an edge */
+    ESP_LOGI(TAG, "X/Y simultaneous START GPIO%d (DI%d), STOP GPIO%d (DI%d); -1 = off", s_sync_gpio[0], CONFIG_FW_SYNC_START_DI,
+             s_sync_gpio[1], CONFIG_FW_SYNC_STOP_DI);
 
     /* M-04: a STOP that is already active at boot latches at once */
     for (uint8_t g = 0; g < axis_count; ++g) {
