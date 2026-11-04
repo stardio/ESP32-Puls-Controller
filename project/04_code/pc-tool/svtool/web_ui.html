@@ -120,7 +120,7 @@ td input { max-width: 180px; }
       <button data-save>설정 저장(SAVE)</button>
       <span class="result" id="pResult"></span>
     </div>
-    <p class="note">적용은 장치 RAM에만 씁니다. 전원을 꺼도 유지하려면 <b>설정 저장</b>을 누르세요. 축이 운전 중이면 일부 항목은 거부될 수 있습니다.</p>
+    <p class="note"><b>변경 적용</b>은 장치 RAM에만 씁니다(전원을 끄면 사라짐). <b>설정 저장</b>은 표에서 고친 값을 먼저 적용한 뒤 플래시에 저장하므로 전원을 꺼도 유지됩니다. 축이 운전 중이면 일부 항목은 거부될 수 있습니다.</p>
     <table><thead><tr><th>항목</th><th>설명</th><th>값</th><th>범위</th><th>기본값</th></tr></thead><tbody id="pBody"></tbody></table>
   </section>
 
@@ -185,7 +185,7 @@ async function api(path, body) {
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("active", x === b));
   document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
-  if (b.dataset.tab === "params") loadParams();
+  if (b.dataset.tab === "params" && !Object.keys(pendingEdits()).length) loadParams();
   if (b.dataset.tab === "help") loadHelp();
 });
 
@@ -356,20 +356,41 @@ $("#stopAll").onclick = async () => {
   const r = await api("/api/stop_all", {});
   const b = $("#bnErr"); if (!r.ok) { b.textContent = `전체 정지 결과: ${r.text}`; b.classList.add("show"); }
 };
+// Save = apply the edited (not yet applied) parameter values first, then SAVE to flash, then re-read.
+// Before this, SAVE alone stored the device's old RAM values and the edits were silently lost.
 document.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
+  const out = $("#pResult");
+  const edits = pendingEdits();
+  if (Object.keys(edits).length) {
+    const w = await api("/api/params", { axis: +$("#pAxis").value, values: edits });
+    if (!w.ok) { out.className = "result bad"; out.textContent = `저장 취소 — 적용 실패: ${w.errors.join(" / ")}`; return; }
+  }
   const r = await api("/api/save", {});
-  $("#pResult").className = "result " + (r.ok ? "ok" : "bad");
-  $("#pResult").textContent = `설정 저장: ${r.text}`;
+  out.className = "result " + (r.ok ? "ok" : "bad");
+  out.textContent = r.ok ? `설정 저장 완료${Object.keys(edits).length ? ` (변경 ${Object.keys(edits).length}개 적용 후 저장)` : ""}. 전원을 꺼도 유지됩니다.`
+                         : `설정 저장 실패: ${r.text}`;
+  if (r.ok && $("#tab-params").classList.contains("active")) loadParams(out.textContent);
 });
 
 // ---------- parameters ----------
 function fillAxisSelect(s) {
   $("#pAxis").innerHTML = s.axes.map(a => `<option value="${a.n}">${a.name}축</option>`).join("");
 }
-$("#pAxis").onchange = () => loadParams();
-$("#pReload").onclick = () => loadParams();
-async function loadParams() {
+let pAxisShown = 1;
+function pendingEdits() {
+  const values = {};
+  $("#pBody").querySelectorAll("input.changed").forEach(i => values[i.dataset.name] = +i.value);
+  return values;
+}
+function discardOk() {
+  const n = Object.keys(pendingEdits()).length;
+  return !n || confirm(`적용하지 않은 변경 ${n}개가 사라집니다. 계속할까요?`);
+}
+$("#pAxis").onchange = () => { if (discardOk()) loadParams(); else $("#pAxis").value = pAxisShown; };
+$("#pReload").onclick = () => { if (discardOk()) loadParams(); };
+async function loadParams(doneMsg) {
   const n = +($("#pAxis").value || 1);
+  pAxisShown = n;
   $("#pResult").className = "result"; $("#pResult").textContent = "읽는 중…";
   const r = await api(`/api/params?axis=${n}`);
   if (!r.ok) { $("#pResult").className = "result bad"; $("#pResult").textContent = r.text; return; }
@@ -379,7 +400,7 @@ async function loadParams() {
     <td class="mono">${p.lo ?? ""}${p.lo !== null || p.hi !== null ? " ~ " : ""}${p.hi ?? ""}</td><td class="mono">${p.default}</td></tr>`).join("");
   $("#pBody").querySelectorAll("input").forEach(i => i.oninput = markChanged);
   markChanged();
-  $("#pResult").textContent = "";
+  $("#pResult").textContent = typeof doneMsg === "string" ? doneMsg : "";
 }
 function markChanged() {
   let n = 0;
@@ -388,12 +409,10 @@ function markChanged() {
   $("#pApply").textContent = n ? `변경 적용 (${n})` : "변경 적용";
 }
 $("#pApply").onclick = async () => {
-  const values = {};
-  $("#pBody").querySelectorAll("input.changed").forEach(i => values[i.dataset.name] = +i.value);
-  const r = await api("/api/params", { axis: +$("#pAxis").value, values });
+  const r = await api("/api/params", { axis: +$("#pAxis").value, values: pendingEdits() });
   $("#pResult").className = "result " + (r.ok ? "ok" : "bad");
-  $("#pResult").textContent = r.ok ? `${r.written}개 적용 완료. 유지하려면 설정 저장을 누르세요.` : r.errors.join(" / ");
-  if (r.ok) loadParams();
+  const msg = `${r.written}개 적용 완료(장치 RAM). 전원을 꺼도 유지하려면 설정 저장을 누르세요.`;
+  if (r.ok) loadParams(msg); else $("#pResult").textContent = r.errors.join(" / ");
 };
 
 poll();
