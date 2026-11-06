@@ -146,4 +146,7 @@ menu "Pulse servo controller (ESP32-P4, 1/2 axis)"
     config FW_DIAG_STACK_REPORT
         bool "DIAGNOSTIC: log task stack high-water marks (sdkconfig.diag only, not for products)"
         default n
+    config FW_DIAG_PULSE_REPORT
+        bool "DIAGNOSTIC: count pulse stops that cut a HIGH pulse short (sdkconfig.diag only, G2 condition C2)"
+        default n
 endmenu

@@ -269,9 +269,16 @@ static void park(fw_axis_t *a)
     set_servo(a);
 }
 
-void fw_axis_stream_park(fw_axis_t *a)
+/* I-050: park without cutting the pulse in progress. true = parked (or not moving); false = the last pulse is still HIGH,
+ * call again next period (no new pulse starts meanwhile) */
+bool fw_axis_stream_park(fw_axis_t *a)
 {
-    if (a->mv != MV_IDLE && a->stream) park(a);
+    if (a->mv == MV_IDLE || !a->stream) return true;
+    fw_hal_pulse_halt(a->idx);
+    TELE(a).cmd_speed = 0;
+    if (!fw_hal_pulse_idle(a->idx)) return false;
+    park(a);
+    return true;
 }
 
 uint8_t fw_axis_stream_run(fw_axis_t *a, bool forward, uint32_t hz)
@@ -283,10 +290,11 @@ uint8_t fw_axis_stream_run(fw_axis_t *a, bool forward, uint32_t hz)
                 if (fw_hal_pulse_set_freq(a->idx, hz) != FW_PE_OK) return FW_RES_RANGE;
                 a->last_hz = hz;
             }
+            fw_hal_pulse_resume(a->idx);            /* a park that has not completed yet: carry on (no-op otherwise) */
             TELE(a).cmd_speed = forward ? (int32_t)hz : -(int32_t)hz;
             return FW_RES_OK;
         }
-        park(a);                                    /* direction change: stop, then restart the other way */
+        if (!fw_axis_stream_park(a)) return FW_RES_OK;   /* direction change: let the last pulse finish, retry next period */
     }
     const uint8_t r = start_move(a, forward, (uint32_t)INT32_MAX, hz, OP(a)[FW_O_ACCEL], OP(a)[FW_O_DECEL]);
     if (r != FW_RES_OK) return r;
@@ -435,7 +443,8 @@ void fw_axis_poll(fw_axis_t *a)
         } else {
             const uint32_t n = fw_hal_pulse_count(a->idx);
             if (a->mv == MV_DECEL && n >= a->stop_at) {
-                finalize(a, a->user_cause ? a->user_cause : FW_SC_STOP_CMD, 2, 0);
+                fw_hal_pulse_halt(a->idx);                           /* I-050: no cut pulse at the end of a decel stop */
+                if (fw_hal_pulse_idle(a->idx)) finalize(a, a->user_cause ? a->user_cause : FW_SC_STOP_CMD, 2, 0);
             } else {
                 const uint32_t f = fw_profile_freq(&a->prof, n);
                 if (f != a->last_hz) {

@@ -162,7 +162,7 @@ static void ip_tick(uint32_t now)
         double f;
         if (ended) {
             const int32_t e = s_ip.fin[a] - cur;
-            if (e == 0) { fw_axis_stream_park(&s_ax[a]); continue; }
+            if (e == 0) { if (!fw_axis_stream_park(&s_ax[a])) all_there = false; continue; }
             all_there = false;
             f = IP_K * e;
             if (fabs(f) < IP_F_MIN) f = e > 0 ? IP_F_MIN : -IP_F_MIN;

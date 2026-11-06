@@ -48,6 +48,19 @@ void app_main(void)
                 ESP_LOGW("FW_STACK", "%-12s stack never used: %u bytes (new low)", st[i].pcTaskName, (unsigned)free_b);
             }
         }
+#if CONFIG_FW_DIAG_PULSE_REPORT
+        /* G2 C2 / I-050: pulse-cut counters, printed when they change */
+        static fw_pulse_diag_t last[2];
+        for (uint8_t ax = 0; ax < 2; ++ax) {
+            fw_pulse_diag_t d;
+            fw_hal_pulse_diag(ax, &d);
+            if (memcmp(&d, &last[ax], sizeof(d)) != 0) {
+                last[ax] = d;
+                ESP_LOGW("FW_PDIAG", "axis %u: stops %u, cut HIGH pulses %u, shortest cut %u ns, late edges %u", (unsigned)(ax + 1),
+                         (unsigned)d.stops, (unsigned)d.cuts, (unsigned)d.min_cut_ns, (unsigned)d.late_edges);
+            }
+        }
+#endif
     }
 #else
     for (;;) vTaskDelay(pdMS_TO_TICKS(1000));

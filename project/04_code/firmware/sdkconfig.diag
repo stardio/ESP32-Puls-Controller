@@ -1,5 +1,7 @@
-# DIAGNOSTIC ONLY (G2 condition C1, I-049): task stack high-water report on the console. Not for products.
+# DIAGNOSTIC ONLY: task stack high-water report (G2 C1, I-049) and pulse-cut counters (G2 C2, I-050) on the console.
+# Not for products.
 # Build: idf.py -B build_diag -D SDKCONFIG=build_diag/sdkconfig
 #        -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.model_2axis_tcp;sdkconfig.bench;sdkconfig.diag" set-target esp32p4 build
 CONFIG_FW_DIAG_STACK_REPORT=y
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FW_DIAG_PULSE_REPORT=y

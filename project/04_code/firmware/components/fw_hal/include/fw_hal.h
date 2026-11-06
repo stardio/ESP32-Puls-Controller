@@ -19,11 +19,22 @@ bool     fw_hal_pulse_ready(uint8_t axis);
 int      fw_hal_pulse_start(uint8_t axis, uint32_t first_hz, uint32_t target_pulses);
 int      fw_hal_pulse_set_freq(uint8_t axis, uint32_t hz);   /* FW_PE_BAD_ARG: not representable, previous period kept */
 void     fw_hal_pulse_stop(uint8_t axis);                    /* [ISR-safe] force LOW + timer stop */
-bool     fw_hal_pulse_finished(uint8_t axis);                /* target reached (set by the PCNT ISR), not yet ended */
+bool     fw_hal_pulse_finished(uint8_t axis);                /* target reached (PCNT ISR), last pulse complete, not yet ended */
+/* I-050: stop without cutting a pulse. halt = finish the pulse in progress, start no new one [ISR-safe]; idle = halted and
+ * the output is LOW (no edge follows, ending is safe); resume = cancel the halt of a running move. */
+void     fw_hal_pulse_halt(uint8_t axis);
+bool     fw_hal_pulse_idle(uint8_t axis);
+void     fw_hal_pulse_resume(uint8_t axis);
 void     fw_hal_pulse_end(uint8_t axis);                     /* finalise after stop/finish: timer, PCNT, watch points; idempotent */
 bool     fw_hal_pulse_active(uint8_t axis);
 uint32_t fw_hal_pulse_count(uint8_t axis);                   /* pulses emitted since fw_hal_pulse_start */
 void     fw_hal_dir_set(uint8_t axis, bool level_high);
+#if CONFIG_FW_DIAG_PULSE_REPORT
+/* diagnostic build only (G2 C2): stops while moving, stops that forced a HIGH output LOW (cut pulse), shortest cut
+ * pulse in ns, edges counted after a halt was complete */
+typedef struct { uint32_t stops, cuts, min_cut_ns, late_edges; } fw_pulse_diag_t;
+void     fw_hal_pulse_diag(uint8_t axis, fw_pulse_diag_t *out);
+#endif
 
 /* ---- shared pulse output enable (GPIO33 -> AM26C31 /G). Must be LOW from the first instruction of boot. ---- */
 void     fw_hal_oe_early_forbid(void);                       /* first call in app_main */

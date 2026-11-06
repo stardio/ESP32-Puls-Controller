@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "driver/pulse_cnt.h"
+#include "hal/mcpwm_ll.h"
 #include "fw_cfg.h"
 #include "fw_hal.h"
 #include "fw_profile.h"
@@ -33,6 +34,8 @@ typedef struct {
     volatile uint32_t completed;
     volatile uint32_t target;
     volatile bool active, done;
+    volatile bool halt;                 /* I-050: stop at the period end (TEP) requested, the pulse in progress completes */
+    volatile uint32_t halt_count;
     uint32_t last_total, cur_ticks;
     int wp_target;
     bool wp_high;
@@ -67,6 +70,36 @@ static uint32_t IRAM_ATTR axis_total(axis_t *a)
     return t;
 }
 
+/* I-050 / review M-05: "halt" = let the pulse in progress finish and start no new one. The generator goes HIGH at TEZ and
+ * LOW at the compare (half period), so a timer stop at the next peak (TEP) ends the period with the output LOW and no
+ * TEZ follows. Register-level (inline, IRAM-safe) because the PCNT ISR uses it; the driver's start_stop is in flash.
+ * One MCPWM group per axis whose only timer is id 0. */
+static inline void IRAM_ATTR timer_cmd(uint8_t axis, mcpwm_timer_start_stop_cmd_t cmd)
+{
+    mcpwm_ll_timer_set_start_stop_command(MCPWM_LL_GET_HW(axis), 0, cmd);
+}
+
+#if CONFIG_FW_DIAG_PULSE_REPORT
+/* diagnostic build only (G2 C2, I-050). One MCPWM group per axis with its only timer/operator/generator = id 0. */
+static struct { volatile uint32_t stops, cuts, min_cut_ticks, late_edges; } s_pd[FW_MAX_AXES_HAL];
+/* just before a moving output is forced LOW: a HIGH pin means the pulse in progress is cut; its HIGH time so far is the
+ * timer count since TEZ (the generator goes HIGH at TEZ) */
+static inline void IRAM_ATTR diag_force(uint8_t axis)
+{
+    s_pd[axis].stops++;
+    if (s_ax[axis].halt && axis_total(&s_ax[axis]) != s_ax[axis].halt_count) s_pd[axis].late_edges++;
+    if (gpio_get_level(s_ax[axis].pls_gpio)) {
+        uint32_t c = mcpwm_ll_timer_get_count_value(MCPWM_LL_GET_HW(axis), 0);
+        if (c == 0) c = 1;
+        s_pd[axis].cuts++;
+        if (!s_pd[axis].min_cut_ticks || c < s_pd[axis].min_cut_ticks) s_pd[axis].min_cut_ticks = c;
+    }
+}
+#define DIAG_FORCE(i) diag_force(i)
+#else
+#define DIAG_FORCE(i) ((void)0)
+#endif
+
 /* PCNT watch point ISR: IRAM, DRAM statics only, driver calls that are IRAM-safe, NO RTOS API (review M-01) */
 static bool IRAM_ATTR on_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *e, void *ctx)
 {
@@ -79,8 +112,10 @@ static bool IRAM_ATTR on_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_d
     } else {
         total = a->completed + (uint32_t)e->watch_point_value;
     }
-    if (a->active && total >= a->target) {
-        mcpwm_generator_set_force_level(a->gen, 0, true);
+    if (a->active && total >= a->target) {          /* the target-th pulse has just risen: let it complete (I-050) */
+        a->halt_count = total;
+        a->halt = true;
+        timer_cmd((uint8_t)(a - s_ax), MCPWM_TIMER_STOP_FULL);
         a->done = true;
     }
     return false;
@@ -209,7 +244,7 @@ int fw_hal_pulse_start(uint8_t axis, uint32_t first_hz, uint32_t target)
     int rc = FW_PE_FAIL;
     pcnt_unit_stop(a->pcnt);
     remove_wps(a);
-    a->completed = 0; a->last_total = 0; a->target = target; a->done = false;
+    a->completed = 0; a->last_total = 0; a->target = target; a->done = false; a->halt = false;
     if (pcnt_unit_add_watch_point(a->pcnt, (int)FW_PCNT_HIGH_LIMIT) != ESP_OK) goto fail;
     a->wp_high = true;
     a->wp_target = (int)fw_target_remainder(target);
@@ -245,12 +280,40 @@ void IRAM_ATTR fw_hal_pulse_stop(uint8_t axis)
     if (axis >= FW_MAX_AXES_HAL) return;
     axis_t *a = &s_ax[axis];
     if (!a->ok) return;
+    if (a->active) DIAG_FORCE(axis);
     a->active = false;
     mcpwm_generator_set_force_level(a->gen, 0, true);
     mcpwm_timer_start_stop(a->timer, MCPWM_TIMER_STOP_EMPTY);
 }
 
-bool fw_hal_pulse_finished(uint8_t axis) { return axis < FW_MAX_AXES_HAL && s_ax[axis].ok && s_ax[axis].active && s_ax[axis].done; }
+bool fw_hal_pulse_finished(uint8_t axis) { return fw_hal_pulse_idle(axis) && s_ax[axis].active && s_ax[axis].done; }
+
+void IRAM_ATTR fw_hal_pulse_halt(uint8_t axis)
+{
+    if (axis >= FW_MAX_AXES_HAL) return;
+    axis_t *a = &s_ax[axis];
+    if (!a->ok || !a->active || a->halt) return;
+    a->halt_count = axis_total(a);
+    a->halt = true;
+    timer_cmd(axis, MCPWM_TIMER_STOP_FULL);
+}
+
+/* after a halt: output LOW = past the compare of the last period, and the timer stops at its peak, so no edge follows */
+bool fw_hal_pulse_idle(uint8_t axis)
+{
+    if (!fw_hal_pulse_ready(axis)) return false;
+    const axis_t *a = &s_ax[axis];
+    return !a->active || (a->halt && gpio_get_level(a->pls_gpio) == 0);
+}
+
+void fw_hal_pulse_resume(uint8_t axis)
+{
+    if (!fw_hal_pulse_ready(axis)) return;
+    axis_t *a = &s_ax[axis];
+    if (!a->active || !a->halt || a->done) return;
+    a->halt = false;
+    timer_cmd(axis, MCPWM_TIMER_START_NO_STOP);      /* cancels the pending stop, or restarts a stopped timer (next TEZ) */
+}
 
 void fw_hal_pulse_end(uint8_t axis)
 {
@@ -269,3 +332,13 @@ uint32_t IRAM_ATTR fw_port_count_isr(uint8_t axis)
 }
 
 uint32_t fw_hal_pulse_count(uint8_t axis) { return fw_port_count_isr(axis); }
+
+#if CONFIG_FW_DIAG_PULSE_REPORT
+void fw_hal_pulse_diag(uint8_t axis, fw_pulse_diag_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (!fw_hal_pulse_ready(axis)) return;
+    out->stops = s_pd[axis].stops; out->cuts = s_pd[axis].cuts; out->late_edges = s_pd[axis].late_edges;
+    out->min_cut_ns = (uint32_t)((uint64_t)s_pd[axis].min_cut_ticks * 1000000000ull / s_ax[axis].res_hz);
+}
+#endif

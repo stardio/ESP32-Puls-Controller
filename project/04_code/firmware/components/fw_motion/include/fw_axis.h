@@ -45,7 +45,7 @@ uint8_t fw_axis_ready_check(const fw_axis_t *a);            /* D-089: same witho
 /* D-089 interpolator stream: run at hz in a direction (start, retune, or park + restart on a direction change),
  * park (stop pulses, keep the position, servo stays ON while ip_hold), current signed position */
 uint8_t fw_axis_stream_run(fw_axis_t *a, bool forward, uint32_t hz);
-void    fw_axis_stream_park(fw_axis_t *a);
+bool    fw_axis_stream_park(fw_axis_t *a);   /* false: last pulse still HIGH, call again next period */
 /* on: session start (target = end point); off: final bookkeeping + servo rule. While on, every axis command except
  * STOP / QUICK_STOP is refused (review C-01: a parked axis looks idle) */
 void    fw_axis_stream_session(fw_axis_t *a, bool on, uint16_t end_cause, int32_t target);

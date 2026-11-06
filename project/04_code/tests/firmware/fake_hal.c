@@ -65,6 +65,9 @@ int fw_hal_pulse_start(uint8_t a, uint32_t hz, uint32_t target)
 int fw_hal_pulse_set_freq(uint8_t a, uint32_t hz) { if (FP[a].fail_set_freq) return FW_PE_BAD_ARG; FP[a].freq = hz; return FW_PE_OK; }
 void fw_hal_pulse_stop(uint8_t a) { if (FP[a].active) FP[a].stops++; FP[a].active = false; }
 bool fw_hal_pulse_finished(uint8_t a) { return FP[a].active && FP[a].finished; }
+void fw_hal_pulse_halt(uint8_t a) { (void)a; }
+bool fw_hal_pulse_idle(uint8_t a) { (void)a; return true; }                 /* the fake has no pulse in progress */
+void fw_hal_pulse_resume(uint8_t a) { (void)a; }
 void fw_hal_pulse_end(uint8_t a) { FP[a].active = false; FP[a].ended = true; FP[a].ends++; }
 bool fw_hal_pulse_active(uint8_t a) { return FP[a].active; }
 uint32_t fw_hal_pulse_count(uint8_t a) { return FP[a].count; }
